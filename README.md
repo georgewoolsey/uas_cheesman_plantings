@@ -1,3 +1,3 @@
-# influence of UAS-lidar flight parameters on tree detection at N1 study site
+# UAS monitoring of Cheesman Reservoir tree planting growth and survival
 
-[**Project site**](https://georgewoolsey.github.io/uas_lidar_n1/)
+[**Project site**](https://georgewoolsey.github.io/uas_cheesman_plantings/)
