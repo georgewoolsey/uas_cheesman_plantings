@@ -129,13 +129,13 @@ what is this raster data?
 rgb_rast
 ```
 
-it looks like there might actually be a forth band...
+it looks like there might actually be a fourth band...
 
 ```{r}
 terra::hist(rgb_rast)
 ```
 
-...or not. that forth band is probably the alpha channel. let's check out the RGB
+...or not. that fourth band is probably the alpha channel. let's check out the RGB
 
 ```{r}
 rgb_rast <- rgb_rast %>% terra::subset(c(1:3))
@@ -249,7 +249,7 @@ there's a DTM
 ```{r}
 # plot to check out the fine-resolution DTM raster
 cloud2raster_ans$dtm_rast %>% 
-  terra::plot(col = harrypotter::hp(n=100, option = "mischief"), main = "DTM (m)")
+  terra::plot(col = harrypotter::hp(n=100, option = "mischief"), main = "DTM (m)", axes = F)
 ```
 
 there's a CHM
@@ -257,7 +257,7 @@ there's a CHM
 ```{r}
 # plot to check out the fine-resolution CHM raster
 cloud2raster_ans$chm_rast %>% 
-  terra::plot(col = viridis::plasma(n=100), main = "CHM (m)")
+  terra::plot(col = viridis::plasma(n=100), main = "CHM (m)", axes = F)
 ```
 
 let's see some details about the CHM
