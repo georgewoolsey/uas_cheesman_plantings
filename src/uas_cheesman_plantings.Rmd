@@ -7,6 +7,7 @@ output:
   html_document:
     toc: true
     toc_float: true
+    toc_depth: 4
     code_folding: hide
 editor_options: 
   chunk_output_type: console
@@ -351,7 +352,23 @@ agg_chm_rast %>%
   )
 ```
 
-....interesting
+...interesting
+
+a few initial observations and thoughts:
+
+* The timing of the data collection (early April) allows the green conifers to stand out against the background terrain and any dormant or senescent grasses and forbs
+  - Tree segmentation could start with identifying green objects from the RGB and then confirm with structural data (or vice-versa)
+* There are standing dead trees which are represented in the upper limits of the CHM (>8 m)
+  - These will need to be removed in an analysis of the tree plantings via spectral filtering and/or height filtering
+  - Could also filter based on some height/area ratio
+* The taller tree plantings (about 1.5-4.5 meters tall) are clearly visible in the CHM
+  - What window function to use for ITD from CHM to separate trees with overlapping crowns?
+* Some of the shorter tree plantings (< 1.5 m) are not represented in the CHM (no CHM pixels overlapping green areas)
+  - Since they are not in the CHM, it is not likely they are in the point cloud since this CHM is effectively a height-normalized DSM based on non-ground points (`cloud2raster(..., min_height = 0)`)
+  - Explore identifying these potential trees first using RGB, then check the raw point cloud in these areas for segmentation and height
+  - If these short trees are not represented in the point cloud, try different SfM processing settings?
+  - If these short trees *are* represented in the point cloud, would need to integrate a tree segmentation method that uses point cloud data directly
+  - If these short trees are not represented in the point cloud even after using different SfM processing, use the RGB for segmentation and shadows for height?
 
 ```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
 remove(list = ls()[grep("_temp",ls())])
