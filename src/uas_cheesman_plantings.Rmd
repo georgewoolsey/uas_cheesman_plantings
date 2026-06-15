@@ -20,7 +20,7 @@ knit: (function(inputFile, encoding){
 
 The 2002 Hayman Fire ([Graham 2003](https://doi.org/10.2737/RMRS-GTR-114); [Moriarty & Cheng, 2012](https://scholar.google.com/scholar?cluster=7513861891704405356&hl=en&as_sdt=0,6)) was the largest in Colorado history at the time and it severely impacted the Cheesman Reservoir and watershed. The reservoir, along with ~8,000 ac surrounding, is managed by Denver Water and is adjacent to the Pike San Isabel National Forest. The high severity fire resulted in near total mortality of the ponderosa pine and Douglas-fir forest surrounding the reservoir which necessitated active planting of seedlings through partnerships between Denver Water and the US Forest Service, Colorado State Forest Service, National Resource Conservation Service and the Colorado Forest Restoration Institute through the *From Forests to Faucets* program ([Denver Water](https://storymaps.arcgis.com/stories/6ef2af96207046baa8451cf20def46cb)). 
 
-The objective of this project is to demonstrate the use of UAS remote sensing to evaluate the survival and growth of the reforestation efforts surrounding the Cheesman Reservoir. An exploratory site visit was made on April 03, 2026 by representatives from Denver Water (Jessica Jackman), CSFS (Ethan Bucholz, Andy Whelan, and Spencer Weston), CFRI (Caden Chamberlain), and CSU (George Woolsey). A single, preliminary UAS flight was completed with the DJI Mavic xx over one of the sites that had some of the first plantings. The flight took ~10 minutes with flight settings programmed to capture data for SfM processing to generate aerial point cloud data and a spectral orthomosaic.
+The objective of this project is to demonstrate the use of UAS remote sensing to evaluate the survival and growth of the reforestation efforts surrounding the Cheesman Reservoir. An exploratory site visit was made on April 03, 2026 by representatives from Denver Water (Jessica Jackman), CSFS (Ethan Bucholz, Andy Whelan, and Spencer Weston), CFRI (Caden Chamberlain), and CSU (George Woolsey). A single, preliminary UAS flight was completed with the [DJI Mavic 3M](https://ag.dji.com/mavic-3-m/specs) over one of the sites that had some of the first plantings. The flight took ~10 minutes with flight settings programmed to capture data for SfM processing to generate aerial point cloud data and a spectral orthomosaic.
 
 ```{r, include=FALSE, warning=F, message=F}
 ################################################
@@ -374,6 +374,232 @@ a few initial observations and thoughts:
 remove(list = ls()[grep("_temp",ls())])
 gc()
 ```
+
+# Spectral-Only Segmentation
+
+let's use the RGB orthomosaic data to attempt an Object-Based Image Analysis (OBIA) workflow to segment individual trees from the RGB imagery without machine learning. We'll do this by combining spectral indices (e.g. GRVI), local maxima filtering (really green areas of the image), and region-growing algorithms (watershed segmentation based on greenness)
+
+first, we'll reduce the resolution (make the raster more coarse) of the RGB raster to both smooth out the raster and reduce noise and to reduce processing time by reducing the size of the data we need to process
+
+we'll shoot for a 0.08 m (8 cm) raster resolution compared to the `r scales::comma(terra::res(rgb_rast)[1],accuracy = 0.001)` m native resolution
+
+```{r}
+fnm_agg_rgb_rast_temp <- "../data/agg_rgb_rast.tif"
+if(!file.exists(fnm_agg_rgb_rast_temp)){
+  agg_rgb_rast <- cloud2trees:::adjust_raster_resolution(
+    rgb_rast
+    , target_resolution = 0.08
+    , fun = mean
+    , resample_method = "bilinear"
+    , ofile = fnm_agg_rgb_rast_temp
+  )  
+}else{
+  agg_rgb_rast <- terra::rast(fnm_agg_rgb_rast_temp)
+}
+# did we do it?
+terra::res(agg_rgb_rast)
+```
+
+how does it look when we zoom in on a 0.5 ha area
+
+```{r}
+aoi <- terra::ext(rgb_rast[[1]]) %>% 
+  sf::st_bbox() %>% 
+  sf::st_as_sfc() %>% 
+  sf::st_centroid() %>% 
+  sf::st_buffer(sqrt(5000)/2) %>% 
+  sf::st_bbox() %>% 
+  sf::st_as_sfc() %>% 
+  sf::st_set_crs(terra::crs(rgb_rast)) %>% 
+  terra::vect()
+agg_rgb_rast %>% 
+  terra::crop(aoi, mask = T) %>% 
+  terra::plotRGB()
+```
+
+ok
+
+`cloud2trees` has (currently) hidden functions for working with RGB spectral data. let's get some relevant spectral indices
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+remove(list = ls()[grep("_temp",ls())])
+gc()
+```
+
+```{r}
+fnm_rgb_indices_rast_temp <- "../data/rgb_indices_rast.tif"
+if(!file.exists(fnm_rgb_indices_rast_temp)){
+  rgb_indices_rast <- cloud2trees:::calculate_rgb_indices(rgb_rast = agg_rgb_rast, red_band_idx = 1, green_band_idx = 2, blue_band_idx = 3)
+  terra::writeRaster(rgb_indices_rast, fnm_rgb_indices_rast_temp, overwrite=T)
+}else{
+  rgb_indices_rast <- terra::rast(fnm_rgb_indices_rast_temp)
+}
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+remove(list = ls()[grep("_temp",ls())])
+gc()
+```
+
+let's look at those indices in our central 0.5 ha area
+
+```{r}
+# did we do it?
+# terra::plot(rgb_indices_rast)
+rgb_indices_rast %>% 
+  terra::crop(aoi, mask = T) %>% 
+  terra::plot(
+    nc = 3
+    , col = grDevices::gray.colors(111, start = 0, end = 1)
+    , mar = c(0.5,0.5,2,0.5)
+    , axes = FALSE
+    , legend = F
+  )
+```
+
+wow. a few of those indices really make the green areas stand out (which is why they are included in `cloud2trees`). let's mask for only the really green areas using the ExGR index threshold of zero (i.e. if ExGR > 0, then likely tree) see [Meyer & Neto (2008)](https://doi.org/10.1016/j.compag.2008.03.009) and [Riehle et al. (2020)](https://doi.org/10.1016/j.compag.2019.105201)
+
+```{r}
+grvi_thrshld_rast <- terra::ifel(rgb_indices_rast$exgr > 0, rgb_indices_rast$exgr, NA)
+```
+
+plot that on top of the original
+
+```{r, include = F, eval=FALSE}
+graphics::par(mfrow = c(1, 2), mar = c(4, 4, 3, 2))
+terra::plotRGB(agg_rgb_rast %>% terra::crop(aoi,mask=T), main = "RGB Raster")
+terra::plot(
+  grvi_thrshld_rast %>% terra::crop(aoi,mask=T)
+  , col =  grDevices::colorRampPalette( RColorBrewer::brewer.pal(9, "Greens") )(100)
+  , main = "ExGR > 0"
+  , axes = F
+  , plg = list(
+    title = "ExGR"
+    , cex = 0.8, title.cex = 0.5, shrink = 0.6
+  )
+)
+graphics::par(mfrow = c(1, 1))
+
+```
+
+```{r}
+terra::plotRGB(agg_rgb_rast %>% terra::crop(aoi,mask=T))
+terra::plot(
+  grvi_thrshld_rast %>% terra::crop(aoi,mask=T)
+  , col =  grDevices::colorRampPalette( RColorBrewer::brewer.pal(9, "Greens") )(100)
+  # , main = "ExGR > 0"
+  , axes = F
+  , legend = F
+  , alpha = 0.4
+  # , plg = list(
+  #   title = "ExGR"
+  #   , cex = 0.8, title.cex = 0.5, shrink = 0.6
+  # )
+  , add = T
+)
+```
+
+looking good. let's use `lidR::locate_trees` with a LMF to detect the greenest pixel (as the center of the tree) to use in a MCWS ;D
+
+```{r}
+ws_temp <- 6 # 6 = mature PIPO crown diameter
+# identify tree tops
+tree_tops <- 
+  lidR::locate_trees(
+    grvi_thrshld_rast
+    , algorithm = lidR::lmf(
+      ws = ws_temp
+      , hmin = 0 # ExGR threshold
+    )
+  )
+```
+
+check it
+
+```{r}
+terra::plot(
+  grvi_thrshld_rast %>% terra::crop(aoi,mask=T)
+  , col =  grDevices::colorRampPalette( RColorBrewer::brewer.pal(9, "Greens") )(100)
+  , axes = F
+  , plg = list(
+    title = "ExGR"
+    , cex = 0.8, title.cex = 0.5, shrink = 0.6
+  )
+)
+tree_tops %>% 
+  # drops z values
+  sf::st_zm(drop = T) %>% 
+  terra::vect() %>% 
+  terra::crop(aoi) %>% 
+  terra::plot(add = T, cex = 0.5, col = "magenta")
+```
+
+delineate crowns
+
+```{r}
+# delineate crowns
+crowns <- ForestTools::mcws(
+  treetops = sf::st_zm(tree_tops, drop = T) # drops z values
+  , CHM = grvi_thrshld_rast
+  , minHeight = 0
+) %>% 
+  # convert raster to polygons for each individual crown
+  terra::as.polygons() %>%
+  # fix polygon validity
+  terra::makeValid() %>%
+  # reduce the number of nodes in geometries
+  terra::simplifyGeom() %>%
+  # remove holes in polygons
+  terra::fillHoles() %>%
+  # convert to sf
+  sf::st_as_sf() %>%
+  dplyr::rename(layer = 1) %>%
+  # get the crown area
+  dplyr::mutate(
+    crown_area_m2 = as.numeric(sf::st_area(.))
+  ) %>%
+  #remove super small crowns
+  dplyr::filter(
+    crown_area_m2 > 0.3 # 
+  )
+```
+
+where are these?
+
+```{r}
+terra::plot(
+  grvi_thrshld_rast %>% terra::crop(aoi,mask=T)
+  , col =  grDevices::colorRampPalette( RColorBrewer::brewer.pal(9, "Greens") )(100)
+  , axes = F
+  , plg = list(
+    title = "ExGR"
+    , cex = 0.8, title.cex = 0.5, shrink = 0.6
+  )
+)
+tree_tops %>% 
+  # drops z values
+  sf::st_zm(drop = T) %>% 
+  terra::vect() %>% 
+  terra::crop(aoi) %>% 
+  terra::plot(add = T, cex = 0.5, col = "magenta")
+crowns %>% 
+  # drops z values
+  terra::vect() %>% 
+  terra::crop(aoi) %>% 
+  terra::plot(add = T, col = NA, border = "cyan")
+```
+
+look at the crowns only on the RGB
+
+```{r}
+terra::plotRGB(agg_rgb_rast %>% terra::crop(aoi,mask=T))
+crowns %>% 
+  # drops z values
+  terra::vect() %>% 
+  terra::crop(aoi) %>% 
+  terra::plot(add = T, col = NA, border = "cyan", lwd = 2)
+```
+
 
 ## ITD Tuning
 
