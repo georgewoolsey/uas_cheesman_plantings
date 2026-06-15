@@ -502,7 +502,7 @@ terra::plot(
 looking good. let's use `lidR::locate_trees` with a LMF to detect the greenest pixel (as the center of the tree) to use in a MCWS ;D
 
 ```{r}
-ws_temp <- 6 # 6 = mature PIPO crown diameter
+ws_temp <- 6*0.8 # 6 = mature PIPO crown diameter
 # identify tree tops
 tree_tops <- 
   lidR::locate_trees(
@@ -583,7 +583,8 @@ tree_tops %>%
   terra::crop(aoi) %>% 
   terra::plot(add = T, cex = 0.5, col = "magenta")
 crowns %>% 
-  # drops z values
+  dplyr::mutate(treeID = dplyr::row_number()) %>% 
+  cloud2trees::simplify_multipolygon_crowns() %>% 
   terra::vect() %>% 
   terra::crop(aoi) %>% 
   terra::plot(add = T, col = NA, border = "cyan")
@@ -594,10 +595,16 @@ look at the crowns only on the RGB
 ```{r}
 terra::plotRGB(agg_rgb_rast %>% terra::crop(aoi,mask=T))
 crowns %>% 
-  # drops z values
+  dplyr::mutate(treeID = dplyr::row_number()) %>% 
+  cloud2trees::simplify_multipolygon_crowns() %>% 
   terra::vect() %>% 
   terra::crop(aoi) %>% 
-  terra::plot(add = T, col = NA, border = "cyan", lwd = 2)
+  terra::plot(add = T, col = NA, border = "cyan", lwd = 1.5)
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+remove(list = ls()[grep("_temp",ls())])
+gc()
 ```
 
 
