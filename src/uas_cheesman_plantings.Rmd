@@ -26,6 +26,8 @@ The objective of this project is to demonstrate the use of UAS remote sensing to
 ################################################
 ##```{r,eval=T
 ################################################
+library(knitr)
+library(mapview)
 # clean session
 remove(list = ls())
 gc()
@@ -73,6 +75,7 @@ library(terra) # raster
 library(sf) # simple features
 library(lidR) # lidR
 library(cloud2trees) # cloud2trees
+library(exactextractr) # raster value extract
 ```
 
 ```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
@@ -253,7 +256,42 @@ cloud2raster_ans$dtm_rast %>%
   terra::plot(col = harrypotter::hp(n=100, option = "mischief"), main = "DTM (m)", axes = F)
 ```
 
-there's a CHM
+we'll use the DTM + RGB extent to create a stand polygon since we don't have a stand poly and want to use it to filter data for edge effects (i.e. remove data along edges of data collection extent)
+
+```{r}
+stand_sf <- 
+  cloud2raster_ans$dtm_rast %>% 
+  terra::not.na(falseNA=T) %>% 
+  terra::as.polygons(values = TRUE, aggregate = TRUE) %>% 
+  sf::st_as_sf() %>% 
+  sf::st_buffer(-20)
+stand_sf <- 
+  stand_sf %>% 
+  st_union() %>% 
+  sf::st_intersection(
+    rgb_rast %>% 
+      sum(na.rm = T) %>% 
+      terra::not.na(falseNA=T) %>% 
+      terra::as.polygons(values = TRUE, aggregate = TRUE) %>% 
+      sf::st_as_sf() %>% 
+      sf::st_buffer(-20) %>% 
+      st_union()
+  ) %>% 
+  sf::st_concave_hull(ratio = 1) %>% 
+  sf::st_as_sf()
+```
+
+and we'll make sure the stand that we defined above includes the mass of both the data collection (RGB and DTM) while removing edges
+
+```{r}
+cloud2raster_ans$dtm_rast %>% 
+  terra::plot(col = harrypotter::hp(n=100, option = "mischief"), main = "DTM (m) + 'stand' boundary", axes = F)
+stand_sf %>% 
+  terra::vect() %>% 
+  terra::plot(border = "blue", col = NA, lwd = 2, add = T)
+```
+
+there's also a CHM
 
 ```{r}
 # plot to check out the fine-resolution CHM raster
@@ -379,6 +417,13 @@ gc()
 
 let's use the RGB orthomosaic data to attempt an Object-Based Image Analysis (OBIA) workflow to segment individual trees from the RGB imagery without machine learning. We'll do this by combining spectral indices (e.g. GRVI), local maxima filtering (really green areas of the image), and region-growing algorithms (watershed segmentation based on greenness)
 
+some relevant research includes: 
+
+* [Pouliot et al. (2002)](https://doi.org/10.1016/S0034-4257(02)00050-0)
+* [Wang et al. (2004)](https://doi.org/10.14358/PERS.70.3.351)
+* [Xu et al. (2021)](https://doi.org/10.1016/j.rse.2021.112397)
+
+
 first, we'll reduce the resolution (make the raster more coarse) of the RGB raster to both smooth out the raster and reduce noise and to reduce processing time by reducing the size of the data we need to process
 
 we'll shoot for a 0.08 m (8 cm) raster resolution compared to the `r scales::comma(terra::res(rgb_rast)[1],accuracy = 0.001)` m native resolution
@@ -416,6 +461,8 @@ agg_rgb_rast %>%
   terra::crop(aoi, mask = T) %>% 
   terra::plotRGB()
 ```
+
+## Spectral Indices
 
 ok
 
@@ -463,14 +510,14 @@ wow. a few of those indices really make the green areas stand out (which is why 
 grvi_thrshld_rast <- terra::ifel(rgb_indices_rast$exgr > 0, rgb_indices_rast$exgr, NA)
 ```
 
-plot that on top of the original
+plot those green pixels on top of the original RGB
 
 ```{r, include = F, eval=FALSE}
 graphics::par(mfrow = c(1, 2), mar = c(4, 4, 3, 2))
 terra::plotRGB(agg_rgb_rast %>% terra::crop(aoi,mask=T), main = "RGB Raster")
 terra::plot(
   grvi_thrshld_rast %>% terra::crop(aoi,mask=T)
-  , col =  grDevices::colorRampPalette( RColorBrewer::brewer.pal(9, "Greens") )(100)
+  , col =  grDevices::colorRampPalette( RColorBrewer::brewer.pal(9, "Greens")[2:9] )(100)
   , main = "ExGR > 0"
   , axes = F
   , plg = list(
@@ -486,7 +533,7 @@ graphics::par(mfrow = c(1, 1))
 terra::plotRGB(agg_rgb_rast %>% terra::crop(aoi,mask=T))
 terra::plot(
   grvi_thrshld_rast %>% terra::crop(aoi,mask=T)
-  , col =  grDevices::colorRampPalette( RColorBrewer::brewer.pal(9, "Greens") )(100)
+  , col =  grDevices::colorRampPalette( RColorBrewer::brewer.pal(9, "Greens")[2:9] )(100)
   # , main = "ExGR > 0"
   , axes = F
   , legend = F
@@ -499,12 +546,14 @@ terra::plot(
 )
 ```
 
-looking good. let's use `lidR::locate_trees` with a LMF to detect the greenest pixel (as the center of the tree) to use in a MCWS ;D
+## Segment Trees
+
+looking good. let's use `lidR::locate_trees` with a LMF (local maximum filter) using a search window sized to 80% of a mature tree crown (we don't expect mature trees here) to detect the greenest pixel (as the center of the tree) to use in a MCWS ;D
 
 ```{r}
 ws_temp <- 6*0.8 # 6 = mature PIPO crown diameter
 # identify tree tops
-tree_tops <- 
+tree_tops_temp <- 
   lidR::locate_trees(
     grvi_thrshld_rast
     , algorithm = lidR::lmf(
@@ -514,19 +563,19 @@ tree_tops <-
   )
 ```
 
-check it
+check out locations of the greenest pixel per potential tree location
 
 ```{r}
 terra::plot(
   grvi_thrshld_rast %>% terra::crop(aoi,mask=T)
-  , col =  grDevices::colorRampPalette( RColorBrewer::brewer.pal(9, "Greens") )(100)
+  , col =  grDevices::colorRampPalette( RColorBrewer::brewer.pal(9, "Greens")[2:9] )(100)
   , axes = F
   , plg = list(
     title = "ExGR"
     , cex = 0.8, title.cex = 0.5, shrink = 0.6
   )
 )
-tree_tops %>% 
+tree_tops_temp %>% 
   # drops z values
   sf::st_zm(drop = T) %>% 
   terra::vect() %>% 
@@ -534,12 +583,13 @@ tree_tops %>%
   terra::plot(add = T, cex = 0.5, col = "magenta")
 ```
 
-delineate crowns
+delineate crowns using a marker controlled watershed algorithm (`ForestTools::mcws()`)
 
 ```{r}
+min_area_m2_temp <- pi*(0.7/3.281)^2 # 0.7 ft min radius
 # delineate crowns
-crowns <- ForestTools::mcws(
-  treetops = sf::st_zm(tree_tops, drop = T) # drops z values
+crowns_sf_spectral <- ForestTools::mcws(
+  treetops = sf::st_zm(tree_tops_temp, drop = T) # drops z values
   , CHM = grvi_thrshld_rast
   , minHeight = 0
 ) %>% 
@@ -553,53 +603,282 @@ crowns <- ForestTools::mcws(
   terra::fillHoles() %>%
   # convert to sf
   sf::st_as_sf() %>%
-  dplyr::rename(layer = 1) %>%
+  dplyr::rename(treeID = 1) %>%
   # get the crown area
   dplyr::mutate(
     crown_area_m2 = as.numeric(sf::st_area(.))
   ) %>%
   #remove super small crowns
   dplyr::filter(
-    crown_area_m2 > 0.3 # 
-  )
+    crown_area_m2 > min_area_m2_temp
+  ) %>% 
+  # keep only the largest portion/polygon of each segment if split across non-connected pieces
+  cloud2trees::simplify_multipolygon_crowns()
 ```
 
 where are these?
 
 ```{r}
+crowns_sf_spectral %>% dplyr::glimpse()
+```
+
+let's check out the segmented crowns (blue) with the potential tree point locations (pink) on the GRVI raster. note that we only kept crowns that met a minimum area threshold (`r scales::comma(min_area_m2_temp, accuracy = 0.01)` square meters, approx. `r scales::comma(sqrt(min_area_m2_temp/pi)*3.281, accuracy = 0.01)` ft radius)
+
+```{r}
 terra::plot(
   grvi_thrshld_rast %>% terra::crop(aoi,mask=T)
-  , col =  grDevices::colorRampPalette( RColorBrewer::brewer.pal(9, "Greens") )(100)
+  , col =  grDevices::colorRampPalette( RColorBrewer::brewer.pal(9, "Greens")[2:9] )(100)
   , axes = F
   , plg = list(
     title = "ExGR"
     , cex = 0.8, title.cex = 0.5, shrink = 0.6
   )
 )
-tree_tops %>% 
+tree_tops_temp %>% 
   # drops z values
   sf::st_zm(drop = T) %>% 
   terra::vect() %>% 
   terra::crop(aoi) %>% 
   terra::plot(add = T, cex = 0.5, col = "magenta")
-crowns %>% 
-  dplyr::mutate(treeID = dplyr::row_number()) %>% 
-  cloud2trees::simplify_multipolygon_crowns() %>% 
+crowns_sf_spectral %>% 
   terra::vect() %>% 
   terra::crop(aoi) %>% 
-  terra::plot(add = T, col = NA, border = "cyan")
+  terra::plot(add = T, col = NA, border = "cyan", lwd = 1.3)
 ```
 
 look at the crowns only on the RGB
 
 ```{r}
 terra::plotRGB(agg_rgb_rast %>% terra::crop(aoi,mask=T))
-crowns %>% 
-  dplyr::mutate(treeID = dplyr::row_number()) %>% 
-  cloud2trees::simplify_multipolygon_crowns() %>% 
+# tree_tops_temp %>% 
+#   # drops z values
+#   sf::st_zm(drop = T) %>% 
+#   terra::vect() %>% 
+#   terra::crop(aoi) %>% 
+#   terra::plot(add = T, cex = 0.5, col = "magenta")
+crowns_sf_spectral %>% 
   terra::vect() %>% 
   terra::crop(aoi) %>% 
-  terra::plot(add = T, col = NA, border = "cyan", lwd = 1.5)
+  terra::plot(add = T, col = NA, border = "cyan", lwd = 1.3)
+```
+
+```{r, include=F, eval=F}
+crowns %>% 
+  terra::vect() %>% 
+  terra::crop(aoi) %>% 
+  mapview::mapview(layer.name="asdf")
+
+terra::plotRGB(rgb_rast %>% terra::crop(crowns %>% dplyr::filter(treeID==1449) %>% sf::st_buffer(2) %>% terra::vect()) )
+crowns %>% 
+  dplyr::filter(treeID==1449) %>% 
+  terra::vect() %>% 
+  terra::plot(add = T, col = NA, border = "cyan", lwd = 1.3)
+
+
+###################################################################################################
+################################################################################################### 
+# [Pouliot et al. (2002)](https://doi.org/10.1016/S0034-4257(02)00050-0), p 328
+# Without angle removal, the delineated polygon appears to be most similar to a natural crown shape, 
+# but it has some extended points and rapid indentations that do not match the crown boundary. 
+# Applying the 40 degree polygon angle removal reduces the presence of these points providing 
+# a generalized representation of the crown shape. Determination of the most suitable angle removal 
+# is left to the user; in this study angles of less than 20 degrees were removed. However, 
+# if trees have large branches, it may be necessary to include polygon angles of less than 20 degrees
+# in order to make rapid directional changes in following the crown boundary.
+###################################################################################################
+###################################################################################################
+
+# clean a single matrix of coordinates (handles individual rings)
+remove_sharp_angles_matrix <- function(coord_matrix, min_angle_deg = 20) {
+  # Close check (sf polygons repeat the first point at the end)
+  # Remove the duplicate end point temporarily for sequential calculations
+  n <- nrow(coord_matrix) - 1
+  if (n < 3) return(coord_matrix) # Cannot form a polygon with fewer than 3 points
+  
+  pts <- coord_matrix[1:n, , drop = FALSE]
+  keep <- rep(TRUE, n)
+  
+  # Calculate angles for each vertex
+  for (i in 1:n) {
+    # Get previous, current, and next indices (with wrap-around)
+    prev_idx <- if (i == 1) n else i - 1
+    next_idx <- if (i == n) 1 else i + 1
+    
+    A <- pts[prev_idx, ]
+    B <- pts[i, ]       # Current vertex
+    C <- pts[next_idx, ]
+    
+    # Create vectors from B
+    v1 <- A - B
+    v2 <- C - B
+    
+    # Calculate angle using dot product
+    dot_prod <- sum(v1 * v2)
+    mag1 <- sqrt(sum(v1^2))
+    mag2 <- sqrt(sum(v2^2))
+    
+    # Prevent division by zero and NaN in acos due to floating point errors
+    if (mag1 == 0 || mag2 == 0) {
+      keep[i] <- FALSE
+      next
+    }
+    
+    cos_theta <- dot_prod / (mag1 * mag2)
+    cos_theta <- max(-1, min(1, cos_theta)) # Clamp to [-1, 1]
+    
+    angle_deg <- acos(cos_theta) * (180 / pi)
+    
+    # If angle is sharper than the threshold, mark for removal
+    if (angle_deg < min_angle_deg) {
+      keep[i] <- FALSE
+    }
+  }
+  
+  # Filter points
+  cleaned_pts <- pts[keep, , drop = FALSE]
+  
+  # If we destroyed the polygon structure (fewer than 3 points remaining), return empty
+  if (nrow(cleaned_pts) < 3) {
+    return(matrix(numeric(0), ncol = 2))
+  }
+  
+  # Re-close the polygon ring by appending the first point to the end
+  cleaned_matrix <- rbind(cleaned_pts, cleaned_pts[1, ])
+  return(cleaned_matrix)
+}
+
+# 2. Function to process an sfg (geometry object) supporting POLYGON and MULTIPOLYGON
+clean_geometry_angles <- function(geom, min_angle_deg = 20) {
+  if (st_is_empty(geom)) return(geom)
+  
+  geom_type <- as.character(st_geometry_type(geom))
+  
+  if (geom_type == "POLYGON") {
+    # Loop through exterior and interior rings
+    cleaned_rings <- lapply(geom, remove_sharp_angles_matrix, min_angle_deg = min_angle_deg)
+    # Filter out any rings that became invalid/empty
+    cleaned_rings <- cleaned_rings[sapply(cleaned_rings, nrow) >= 4]
+    if (length(cleaned_rings) == 0) return(st_polygon())
+    return(st_polygon(cleaned_rings))
+    
+  } else if (geom_type == "MULTIPOLYGON") {
+    cleaned_polys <- lapply(geom, function(poly) {
+      cleaned_rings <- lapply(poly, remove_sharp_angles_matrix, min_angle_deg = min_angle_deg)
+      cleaned_rings[sapply(cleaned_rings, nrow) >= 4]
+    })
+    # Filter out empty polygons
+    cleaned_polys <- cleaned_polys[sapply(cleaned_polys, length) > 0]
+    if (length(cleaned_polys) == 0) return(st_multipolygon())
+    return(st_multipolygon(cleaned_polys))
+    
+  } else {
+    # Return non-polygon geometries unchanged
+    return(geom)
+  }
+}
+
+# 3. Main wrapper function for your sf dataframe
+clean_polygon_angles <- function(sf_data, min_angle_deg = 20) {
+  # Ensure input is an sf object
+  if (!inherits(sf_data, "sf")) stop("Input must be an sf object")
+  
+  # Extract geometry column name
+  geom_col <- attr(sf_data, "sf_column")
+  
+  # Apply cleaning function to every row's geometry
+  sf_data[[geom_col]] <- st_sfc(lapply(st_geometry(sf_data), clean_geometry_angles, min_angle_deg = min_angle_deg), 
+                                crs = st_crs(sf_data))
+  
+  # Remove rows that became empty geometries during the process
+  sf_data <- sf_data[!st_is_empty(sf_data), ]
+  
+  # Fix any self-intersections caused by node removal using st_make_valid
+  sf_data <- st_make_valid(sf_data)
+  
+  return(sf_data)
+}
+
+```
+
+## Identify Tree Height
+
+let's use the CHM data to get the tree height and tree center point for each segmented crown polygon. we could also refine the crown polygon shape by keeping only areas within the RGB-delineated crown that have a CHM height > 0 to remove portions that may have been included due to spectral noise, bleeding, or grass...
+
+```{r}
+# get the max chm value and the xy of the max value from the chm raster for each crown
+chm_df_temp <- 
+  exactextractr::exact_extract(
+    x = cloud2raster_ans$chm_rast
+    , y = crowns_sf_spectral %>% sf::st_transform(terra::crs(cloud2raster_ans$chm_rast))
+    , summarize_df = T
+    , include_xy = T
+    , fun = #"max"
+      function(dta) {
+        valid_dta <- dta[!is.na(dta$value), ]
+        # index of the maximum value
+        max_idx <- which.max(valid_dta$value)
+        # get the max value, x coordinate, and y coordinate 
+        dplyr::tibble(
+          max_val = valid_dta$value[max_idx]
+          , x_coord = valid_dta$x[max_idx]
+          , y_coord = valid_dta$y[max_idx]
+        )
+      }
+    # , default_value = terra::minmax(cloud2raster_ans$chm_rast)[1]
+    , progress = F
+    , append_cols = "treeID" # names(crowns)
+    , force_df = T
+    # , colname_fun = function(fun_name, values, weights, ...) {
+    #   paste0(fun_name, "_", values)
+    # }
+  ) %>% 
+  dplyr::rename(
+    tree_height_m = max_val
+    , tree_x = x_coord
+    , tree_y = y_coord
+  )
+# chm_df_temp %>% dplyr::glimpse()
+# add to tree list and clean missing
+crowns_sf_spectral <-
+  crowns_sf_spectral %>%
+  dplyr::ungroup() %>% 
+  dplyr::left_join(chm_df_temp, by = "treeID") %>% 
+  dplyr::mutate(
+    # if no chm value, set ht to minimum chm value
+    tree_height_m = dplyr::coalesce(
+        tree_height_m
+        , terra::minmax(cloud2raster_ans$chm_rast)[1]
+      ) %>% 
+      dplyr::if_else(.<0,0,.)
+    , tree_height_ft = tree_height_m*3.281
+    # just the center of the segment if no chm value
+    , tree_x = dplyr::coalesce(
+        tree_x
+        , sf::st_coordinates(sf::st_point_on_surface(.))[,1]
+      )
+    , tree_y = dplyr::coalesce(
+        tree_y
+        , sf::st_coordinates(sf::st_point_on_surface(.))[,2]
+      )
+  )
+# get point data to represent tree tops 
+treetops_sf_spectral <-
+  crowns_sf_spectral %>% 
+  sf::st_drop_geometry() %>% 
+  sf::st_as_sf(coords = c("tree_x", "tree_y"), crs = sf::st_crs(crowns_sf_spectral)) %>% 
+  # filter for only those in the stand
+  sf::st_intersection(
+    stand_sf %>% dplyr::mutate(is_in_stand = T) %>% dplyr::select(is_in_stand)
+  )
+# treetops_sf_spectral %>% dplyr::glimpse()
+# filter crowns based on the intersected points
+crowns_sf_spectral <- crowns_sf_spectral %>% 
+  dplyr::inner_join(
+    treetops_sf_spectral %>% 
+      sf::st_drop_geometry() %>% 
+      dplyr::select(treeID,is_in_stand)
+    , by = "treeID"
+  )
 ```
 
 ```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
@@ -607,6 +886,182 @@ remove(list = ls()[grep("_temp",ls())])
 gc()
 ```
 
+what do we have now on our crowns data?
+
+```{r}
+crowns_sf_spectral %>% dplyr::glimpse()
+```
+
+look at the distribution of tree heights
+
+```{r}
+crowns_sf_spectral %>% 
+  sf::st_drop_geometry() %>% 
+  ggplot2::ggplot(mapping = ggplot2::aes(x = tree_height_ft)) +
+  ggplot2::geom_density(fill = "plum", color = "plum", alpha = 0.2) +
+  ggplot2::scale_x_continuous(breaks = scales::breaks_extended(11)) +
+  ggplot2::labs(x = "tree height (ft)", y = "") +
+  ggplot2::theme_light() +
+  ggplot2::theme(axis.text.y = ggplot2::element_blank(), axis.ticks.y = ggplot2::element_blank())
+```
+
+summary of values
+
+```{r, echo=FALSE, message=FALSE}
+crowns_sf_spectral %>% 
+  sf::st_drop_geometry() %>% 
+  dplyr::select(tidyselect::starts_with("tree_height_")) %>% 
+  dplyr::mutate(dplyr::across(dplyr::everything(), ~round(.x,1))) %>% 
+  summary() %>% 
+  knitr::kable(format = "markdown")
+```
+
+say what? there is a tree `r scales::comma(max(crowns_sf_spectral$tree_height_ft), accuracy = 0.1)` ft tall? where?
+
+```{r}
+rgb_rast %>% 
+  terra::crop(
+    crowns_sf_spectral %>% 
+      dplyr::slice_max(order_by = tree_height_m, n = 1, with_ties = F) %>% 
+      sf::st_buffer(12) %>% 
+      terra::vect()
+  ) %>% 
+terra::plotRGB()
+# add chm
+cloud2raster_ans$chm_rast %>% 
+  terra::crop(
+    crowns_sf_spectral %>% 
+      dplyr::slice_max(order_by = tree_height_m, n = 1, with_ties = F) %>% 
+      sf::st_buffer(12) %>% 
+      terra::vect()
+  ) %>% 
+terra::plot(
+  col = viridis::plasma(n=100)
+  , alpha = 0.4
+  , plg = list(title = "CHM (m)", title.cex = 0.9, shrink = 0.6)
+  , add = T
+)
+#add crown
+crowns_sf_spectral %>% 
+  dplyr::slice_max(order_by = tree_height_m, n = 1, with_ties = F) %>% 
+  terra::vect() %>% 
+  terra::plot(add = T, col = NA, border = "cyan", lwd = 1.3)
+```
+
+interesting. let's get rid of the CHM so we can see what's going on
+
+```{r}
+rgb_rast %>% 
+  terra::crop(
+    crowns_sf_spectral %>% 
+      dplyr::slice_max(order_by = tree_height_m, n = 1, with_ties = F) %>% 
+      sf::st_buffer(12) %>% 
+      terra::vect()
+  ) %>% 
+terra::plotRGB()
+#add crown
+crowns_sf_spectral %>% 
+  dplyr::slice_max(order_by = tree_height_m, n = 1, with_ties = F) %>% 
+  terra::vect() %>% 
+  terra::plot(add = T, col = NA, border = "cyan", lwd = 1.3)
+```
+
+it looks like there might be some green coming up directly below a standing dead tree and not likely a surviving tall tree
+
+what about the third tallest tree which as a height of `r crowns_sf_spectral %>% dplyr::arrange(desc(tree_height_m)) %>% dplyr::slice(3) %>% dplyr::pull(tree_height_ft) %>% scales::comma(accuracy=0.1)` ft?
+
+```{r}
+rgb_rast %>% 
+  terra::crop(
+    crowns_sf_spectral %>% 
+      dplyr::arrange(desc(tree_height_m)) %>% 
+      dplyr::slice(3) %>%
+      sf::st_buffer(12) %>% 
+      terra::vect()
+  ) %>% 
+terra::plotRGB()
+#add crown
+crowns_sf_spectral %>% 
+  dplyr::arrange(desc(tree_height_m)) %>% 
+  dplyr::slice(3) %>%  
+  terra::vect() %>% 
+  terra::plot(add = T, col = NA, border = "cyan", lwd = 1.3)
+```
+
+that looks like the same story where a tree is growing directly near a standing dead tree
+
+with this knowledge of these occurrences, let's look at the distribution of tree heights across the data collection area
+
+```{r}
+agg_rgb_rast %>% 
+  # terra::crop(aoi,mask=T) %>% 
+  terra::plotRGB()
+
+treetops_sf_spectral %>% 
+  terra::vect() %>% 
+  terra::plot(
+    "tree_height_ft"
+    , col = grDevices::colorRampPalette( RColorBrewer::brewer.pal(9, "YlOrBr")[2:9] )(100)
+    , alpha = 0.7
+    , add = T
+    , pch = 16
+    , cex = 0.8
+    , plg = list(title = "tree ht. (ft)", title.cex = 0.9)
+  )
+```
+
+neat but it's kind of hard to see. let's zoom in on that central 0.5 ha area
+
+```{r}
+agg_rgb_rast %>% 
+  terra::crop(aoi,mask=T) %>%
+  terra::plotRGB()
+
+treetops_sf_spectral %>% 
+  terra::vect() %>% 
+  terra::crop(aoi) %>%
+  terra::plot(
+    "tree_height_ft"
+    , col = grDevices::colorRampPalette( RColorBrewer::brewer.pal(9, "YlOrBr")[2:9] )(100)
+    , alpha = 0.7
+    , add = T
+    , pch = 16
+    # , cex = 2
+    , plg = list(title = "tree ht. (ft)", title.cex = 0.9)
+  )
+```
+
+finally, how many trees did we identify?
+
+```{r}
+area_ha_temp <- sf::st_area(stand_sf) %>% as.numeric() %>% `/`(10000)
+dplyr::tibble(
+  TPH = nrow(treetops_sf_spectral)/area_ha_temp
+  , TPA = nrow(treetops_sf_spectral)/(area_ha_temp*2.471)
+) %>% 
+dplyr::mutate(dplyr::across(dplyr::where(is.numeric), ~scales::comma(.x,accuracy=0.1))) %>% 
+tidyr::pivot_longer(dplyr::everything()) %>% 
+kableExtra::kbl(
+  caption = paste0(
+    "Green Trees Detected over Demonstration Flight Area"
+    , " ("
+    , scales::comma(area_ha_temp,accuracy = 0.1,suffix = " ha")
+    , " ; "
+    , scales::comma((area_ha_temp*2.471),accuracy = 0.1,suffix = " ac")
+    , ")"
+    , "<br />"
+    , scales::comma(nrow(treetops_sf_spectral),accuracy = 1,suffix = " trees")
+  )
+  , escape = F
+  , col.names = c("","")
+) %>% 
+kableExtra::kable_styling()
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+remove(list = ls()[grep("_temp",ls())])
+gc()
+```
 
 ## ITD Tuning
 
