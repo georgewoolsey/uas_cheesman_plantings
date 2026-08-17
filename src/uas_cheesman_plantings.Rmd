@@ -1063,6 +1063,162 @@ remove(list = ls()[grep("_temp",ls())])
 gc()
 ```
 
+# Field Data Collection Planning
+
+now that we have established this proof-of-concept for segmenting individual trees from UAS-collected spectral data and estimating physical properties (such as height) using 3D digital aerial photogrammetry (DAP) point clouds, the next phase is to execute field data collection.
+
+Remember, the primary objective of this project is to evaluate the success of the reforestation efforts by answering the question: *What proportion of the ~100 planted trees per acre are still alive today?*
+
+Because counting every surviving tree across the expansive planting footprint is logistically and financially impossible, we are using UAS data to achieve a near-census of live trees. However, to trust those landscape-scale estimates, we must first use targeted field plots to validate the accuracy of our UAS workflow. 
+
+Specifically, the field collection will answer targeted validation questions across three core dimensions:
+
+**Tree Detection Accuracy**
+* Recall: What proportion of actual, ground-verified trees did the UAS method successfully detect?
+* Precision: What proportion of UAS-predicted trees were actual, verified trees on the ground?
+* F-score: What is the overall, balanced tree-level detection accuracy of the UAS method?
+
+**Live Tree Density (Trees Per Acre - TPA)**
+* TPA RMSE: How precise is the UAS method at measuring live tree density at the planting unit level?
+* TPA Mean Error: What is the directional bias (over- or under-estimation) of the UAS density estimates compared to field-measured values?
+* TPA MAPE: What is the average relative percentage error of the UAS density estimates?
+
+**Tree-Level Physical Form**
+* Height RMSE: How precise are the UAS photogrammetry height estimates compared to physical field measurements?
+* Height Mean Error: What is the directional bias of the UAS height estimates?
+* Height MAPE: What is the average relative percentage error of the UAS height estimates?
+
+While plot-level field data provides exact measurements of planting survivability, those insights are constrained to the small fractions of the planting extent that ground crews actually measure. If our UAS validation demonstrates acceptable forest inventory accuracy against the plot data, we can confidently scale the UAS measurements across the entire planted footprint. Ultimately, we will rely on the UAS data to generate a comprehensive, planting-wide estimate of survivability, using the UAS-derived TPA RMSE to bound our conclusions with a statistical range of estimated survivability over the entire planted area.
+
+The primary objective of this work is to answer the question *how successful were the reforestation planting efforts?* This can be quantified based on the survivability of the planted trees: *what proportion of the ~100 planted trees per acre are still alive?* The ideal data to answer this question would be to count all of the trees that are living at present day and compare that against how many trees were planted. However, quantifying planting success by comparing current live tree counts against original planting data is complicated by several historical and financial constraints:
+
+1.  Planting Uncertainty: The exact number of trees originally planted is unknown.
+2.  Spatial Uncertainty: Precise planting maps, boundaries, and spatial patterns were not well recorded.
+3.  Methodological Shifts: Tree planting techniques changed over time.
+4.  Overlapping Efforts: Several areas had multiple, compounding planting missions.
+5.  Financial Constraints: Manually surveying the expansive planting area is costly and financiall infeasible.
+6.  Extrapolation Risks: Relying solely on traditional field plots requires extrapolating limited sample sizes over broad, heterogeneous landscapes.
+
+To mitigate these constraints, our field data collection will prioritize a targeted, non-random sampling strategy focused on the following:
+
+1) We will sample across as many different planting years as possible to effectively capture variations in historical planting methods and survivability trends dictated by planting age.
+2) Sampling within target planting years will focus on areas with known tree survival. Because we do not know exactly where historical planting occurred, focusing on surviving clusters guarantees that field sampling takes place in areas that were actually planted. This avoids wasting field time on areas that were either never planted or suffered total mortality (which we wouldn't know because we don't know exactly were plants went in the ground).
+3) We will sample a large enough area to ensure a representative count of survivors for each target year. Historical data indicates that all planting missions targeted a density of ~100 trees per acre. Therefore, an entire acre sample should ideally yield ~100 trees under 100% survivability conditions, while a half-acre sample should yield ~50 trees, and so on.
+
+## Identify Surviving Trees
+
+We used satellite imagery to manually annotate point locations of surviving trees by planting year in planting locations where we felt the most confident in the year and area of the planting. For each planting year, we attempted to manually identify at least 10 surviving trees. Recall that our sampling strategy is presence-focused (i.e. non-random) because we do not know exactly where historical planting occurred, focusing on surviving clusters guarantees that crews are sampling from areas that were actually planted.
+
+Because the primary goal of this field work is to validate the UAS method, we must ensure that our validation metrics (F-score, RMSE, and MAPE) are testing the algorithm's performance across different tree structures, rather than being skewed by external environmental factors. Topography can alter UAS sensor data by introducing variable lighting geometries (shadowing vs. solar glare) and geometric distortions in the DAP reconstructions on steep slopes. To isolate how well the UAS workflow performs across different tree sizes and ages (i.e. planting years), we will attempt to distribute field plots across matching topographic cohorts (slope and aspect profiles) across all target planting years. This controls for terrain-induced sensor changes.
+
+```{r, include=F, eval = F}
+# read in USGS 1m DEM from national map: https://apps.nationalmap.gov/downloader/
+dem_files <- list.files(path = "../data/usgs_dem", pattern = "*\\.tif$", full.names = TRUE)
+
+# Read them into a terra collection pointer list
+dem_list <- lapply(dem_files, terra::rast)
+
+# Combine the rasters into a single unified mosaic dataset
+# terra::sprc acts as a fast SpatRasterCollection wrapper
+compiled_dem_1m <- terra::mosaic(terra::sprc(dem_list))
+names(compiled_dem_1m) <- "elevation"
+
+# 3. Derive Core Terrain Layers ----
+# Slopes and aspects must be calculated in radians for McCune's math equations
+slope_rad  <- terra::terrain(compiled_dem_1m, v = "slope", unit = "radians")
+aspect_rad <- terra::terrain(compiled_dem_1m, v = "aspect", unit = "radians")
+
+# Extract the continuous Y coordinates (Latitude) across the grid canvas
+# We transform them to latitude degrees if the native projection uses meters
+lonlat_grid <- terra::crds(compiled_dem_1m, df = TRUE, na.rm = FALSE)
+lat_vector  <- lonlat_grid$y
+
+# Convert the localized planar coordinates to absolute latitude degrees
+# (Adjust this conversion if your native raster is already in EPSG:4326)
+lat_rast <- terra::rast(compiled_dem_1m, vals = lat_vector)
+lat_rad  <- lat_rast * (pi / 180)
+
+# 4. Compute Topographic Heat Load Index (HLI) ----
+# Folded Aspect handles the SW-NE physical symmetry axis (McCune & Keon 2002)
+# Folded Aspect = |pi - |Aspect - 5pi/4|| 
+folded_aspect <- abs(pi - abs(aspect_rad - (5 * pi / 4)))
+
+# Implement McCune & Keon (2002) Equation 2 (For True Heat Load Index)
+hli_1m <- exp(-0.291 + 
+                (0.814 * cos(lat_rad) * cos(slope_rad)) - 
+                (2.311 * sin(lat_rad) * sin(slope_rad)) - 
+                (0.611 * cos(folded_aspect) * sin(slope_rad)) - 
+                (0.354 * sin(folded_aspect) * sin(slope_rad)))
+
+names(hli_1m) <- "hli"
+
+# 5. Create Coarse Grain Grid (5-meter Scale) ----
+# Aggregate cuts computational weight while preserving macro-topography averages
+compiled_dem_5m <- terra::aggregate(compiled_dem_1m, fact = 5, fun = "mean")
+hli_5m          <- terra::aggregate(hli_1m, fact = 5, fun = "mean")
+
+# Stack the multi-scale structural metrics together for zonal profiling
+terrain_stack_1m <- c(compiled_dem_1m, slope_rad * (180 / pi), hli_1m)
+names(terrain_stack_1m) <- c("elevation", "slope_deg", "hli")
+
+# 
+# I went about to getting at least 10 trees per planting year. 
+# I tried to capture areas that encompass the entire planting areas for each planting year,
+# but trees were admittedly a little sparse, 
+# which made me make it a bit more dense in areas where there was good survival. 
+
+# 6. Generate 1-Acre Square Sample Units ----
+# Assume 'known_trees_sf' contains spatial point geometries and a 'planting_year' column
+# We sample 10 candidates per planting year
+candidate_centers <- known_trees_sf %>%  
+  dplyr::group_by(planting_year) %>% 
+  dplyr::slice_head(n = 10) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(plot_id = dplyr::row_number())
+
+# Buffer the point centers outward by 31.8 meters using square cap boundaries
+# This outputs a perfectly uniform square measuring exactly 1 acre (4,046 m2)
+candidate_plots_sf <- sf::st_buffer(
+  x = candidate_centers, 
+  dist = 31.8, 
+  endCapStyle = "SQUARE"
+)
+
+# 7. Extract Exact Zonal Topographic Statistics ----
+# exactextractr::exact_extract computes perfect area-weighted means for overlapping edge cells
+zonal_metrics <- exactextractr::exact_extract(
+  x = terrain_stack_1m, 
+  y = candidate_plots_sf, 
+  fun = "mean",
+  append_cols = c("plot_id", "planting_year")
+) %>% 
+  dplyr::rename(
+    mean_elevation = mean.elevation,
+    mean_slope     = mean.slope_deg,
+    mean_hli       = mean.hli
+  )
+
+# 8. Statistically Group Similar Polygons (K-Means Clustering) ----
+# Normalize the extracted topographic values so variables have equal statistical weight
+clustering_data <- zonal_metrics %>% 
+  dplyr::select(mean_elevation, mean_slope, mean_hli) %>% 
+  base::scale()
+
+# Segment the candidate plots into 3 separate homogeneous landforms/cohorts
+set.seed(42)
+kmeans_model <- base::kmeans(clustering_data, centers = 3, nstart = 25)
+
+# Append the group cohorts back into the spatial data framework
+final_candidate_plots <- candidate_plots_sf %>% 
+  dplyr::left_join(zonal_metrics, by = c("plot_id", "planting_year")) %>% 
+  dplyr::mutate(topo_group_cohort = as.factor(kmeans_model$cluster))
+
+print(final_candidate_plots)
+
+```
+
+
+
 ## ITD Tuning
 
 from the `cloud2trees` readme:
