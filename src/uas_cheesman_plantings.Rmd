@@ -1105,60 +1105,441 @@ To mitigate these constraints, our field data collection will prioritize a targe
 2) Sampling within target planting years will focus on areas with known tree survival. Because we do not know exactly where historical planting occurred, focusing on surviving clusters guarantees that field sampling takes place in areas that were actually planted. This avoids wasting field time on areas that were either never planted or suffered total mortality (which we wouldn't know because we don't know exactly were plants went in the ground).
 3) We will sample a large enough area to ensure a representative count of survivors for each target year. Historical data indicates that all planting missions targeted a density of ~100 trees per acre. Therefore, an entire acre sample should ideally yield ~100 trees under 100% survivability conditions, while a half-acre sample should yield ~50 trees, and so on.
 
-## Identify Surviving Trees
-
-We used satellite imagery to manually annotate point locations of surviving trees by planting year in planting locations where we felt the most confident in the year and area of the planting. For each planting year, we attempted to manually identify at least 10 surviving trees. Recall that our sampling strategy is presence-focused (i.e. non-random) because we do not know exactly where historical planting occurred, focusing on surviving clusters guarantees that crews are sampling from areas that were actually planted.
+## Topography
 
 Because the primary goal of this field work is to validate the UAS method, we must ensure that our validation metrics (F-score, RMSE, and MAPE) are testing the algorithm's performance across different tree structures, rather than being skewed by external environmental factors. Topography can alter UAS sensor data by introducing variable lighting geometries (shadowing vs. solar glare) and geometric distortions in the DAP reconstructions on steep slopes. To isolate how well the UAS workflow performs across different tree sizes and ages (i.e. planting years), we will attempt to distribute field plots across matching topographic cohorts (slope and aspect profiles) across all target planting years. This controls for terrain-induced sensor changes.
 
-```{r, include=F, eval = F}
+We downloaded a 1m DEM from the [USGS National Map](https://apps.nationalmap.gov/downloader/) and here is an example DEM tile with it's [metadata](https://www.sciencebase.gov/catalog/item/69c20ed8b66b01d6ebf33cae)
+
+We use the DEM to perform many raster calculations to get measures of slope, aspect, latitude and more. One of the primary metrics we are after is topographic heat load index (HLI) which was developed to combine slope, folded aspect (i.e., “southwestness”), and latitude to estimate terrain-driven solar heating at a given location ([McCune & Keon 2002: eq. 2](https://doi.org/10.1111/j.1654-1103.2002.tb02087.x)). Higher values of HLI near one are typical on steep southwesterly slopes, while low values near zero are common on steep northeasterly slopes. Moderate values are common in flatter terrain and on northwesterly and southeasterly aspects. 
+
+let's read in the Cheesman
+
+```{r}
+# https://geo.colorado.edu/catalog/47540-5c93a0c3a1c5dc000989496d
+fnm_temp <- "../data/LAKES/LAKES.shp"
+cheesman_sf <- sf::st_read(
+  fnm_temp
+  # Cheesman Lake
+  , query = 
+    sprintf(
+      "SELECT * FROM %s WHERE NAME IN (%s)"
+      , basename(fnm_temp) %>% stringr::str_remove("^.*/") %>% stringr::str_remove("\\.[^.]+$")
+      , stringr::str_c("'", c("Cheesman Lake"), "'", collapse = ", ")
+    )
+  , quiet = T
+) %>% 
+sf::st_union()
+# cheesman_sf %>% dplyr::glimpse()
+# mapview::mapview(cheesman_sf, zcol = "NAME")
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+remove(list = ls()[grep("_temp",ls())])
+gc()
+```
+
+### Elevation
+
+this data is directly from the USGS National Map
+
+```{r}
+# DEM covering entire area
 # read in USGS 1m DEM from national map: https://apps.nationalmap.gov/downloader/
-dem_files <- list.files(path = "../data/usgs_dem", pattern = "*\\.tif$", full.names = TRUE)
+dem_fnm_temp <- "../data/usgs_dem/dem_1m_rast.tif"
 
-# Read them into a terra collection pointer list
-dem_list <- lapply(dem_files, terra::rast)
+# dem_1m_rast <-
+#   list.files(path = dirname(dem_fnm_temp), pattern = "*\\ArapahoRooseveltPikeNF_D23.tif$", full.names = TRUE, recursive = F) %>%
+#   .[1] %>%
+#   terra::rast()
 
-# Combine the rasters into a single unified mosaic dataset
-# terra::sprc acts as a fast SpatRasterCollection wrapper
-compiled_dem_1m <- terra::mosaic(terra::sprc(dem_list))
-names(compiled_dem_1m) <- "elevation"
+if(!file.exists(dem_fnm_temp)){
+  dem_list <- 
+    list.files(path = dirname(dem_fnm_temp), pattern = "*\\ArapahoRooseveltPikeNF_D23.tif$", full.names = TRUE, recursive = F) %>% 
+    unique() %>% 
+    purrr::map(terra::rast)
 
-# 3. Derive Core Terrain Layers ----
-# Slopes and aspects must be calculated in radians for McCune's math equations
-slope_rad  <- terra::terrain(compiled_dem_1m, v = "slope", unit = "radians")
-aspect_rad <- terra::terrain(compiled_dem_1m, v = "aspect", unit = "radians")
+  # terra::plot(dem_list[[1]])
+  
+  # combine the rasters into a single unified mosaic dataset
+  dem_1m_rast <- terra::mosaic(terra::sprc(dem_list), fun = "mean", filename = dem_fnm_temp, overwrite=F)
+  
+}else{
+  dem_1m_rast <- terra::rast(dem_fnm_temp)
+}
+# name
+names(dem_1m_rast) <- "elevation"
 
-# Extract the continuous Y coordinates (Latitude) across the grid canvas
-# We transform them to latitude degrees if the native projection uses meters
-lonlat_grid <- terra::crds(compiled_dem_1m, df = TRUE, na.rm = FALSE)
-lat_vector  <- lonlat_grid$y
+# dem_1m_rast
+# dem_1m_rast %>% terra::plot(col = harrypotter::hp(n=100, option = "mischief"), main = "DEM (m)", axes = F)
+# dem_1m_rast %>% terra::crs()
 
-# Convert the localized planar coordinates to absolute latitude degrees
-# (Adjust this conversion if your native raster is already in EPSG:4326)
-lat_rast <- terra::rast(compiled_dem_1m, vals = lat_vector)
-lat_rad  <- lat_rast * (pi / 180)
+cheesman_sf <- cheesman_sf %>% sf::st_transform(terra::crs(dem_1m_rast))
 
-# 4. Compute Topographic Heat Load Index (HLI) ----
-# Folded Aspect handles the SW-NE physical symmetry axis (McCune & Keon 2002)
-# Folded Aspect = |pi - |Aspect - 5pi/4|| 
-folded_aspect <- abs(pi - abs(aspect_rad - (5 * pi / 4)))
+# plot
+terra::plot(
+  dem_1m_rast
+  , col = harrypotter::hp(n=100, option = "mischief")
+  , axes = F
+  , plg = list(
+     title = "elevation (m)"
+     , x = "right"
+     , shrink = 0.6
+     , title.cex = 0.8
+     , cex = 0.8
+   )
+)
+terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
 
-# Implement McCune & Keon (2002) Equation 2 (For True Heat Load Index)
-hli_1m <- exp(-0.291 + 
-                (0.814 * cos(lat_rad) * cos(slope_rad)) - 
-                (2.311 * sin(lat_rad) * sin(slope_rad)) - 
-                (0.611 * cos(folded_aspect) * sin(slope_rad)) - 
-                (0.354 * sin(folded_aspect) * sin(slope_rad)))
+```
 
-names(hli_1m) <- "hli"
+### Terrain
 
+now we need to get the terrain inputs for HLI which include: a raster of latitudes, slope, and aspect
+
+we'll start with latitude. literally a raster of latitude values
+
+```{r}
+## now we need to get a raster of the WGS84 latitude values
+# # extract cell coordinates and force project the to WGS84 for latitude
+# to limit the data we'll process and since reprojecting lots of data with sf::sf_project(); terra::project(); or sf::st_transform() is slow
+# we'll just work with the first column from the original raster, transform the y to get latitude, apply that latitude for each column by row based on the str of the original raster
+
+# get the first column coordinates
+# ?terra::xyFromCell
+first_col_xy_temp <- 
+  terra::xyFromCell(
+    dem_1m_rast
+    , cell = seq(from = 1, to = terra::ncell(dem_1m_rast), by = terra::ncol(dem_1m_rast))
+  )
+# head(first_col_xy_temp)
+# nrow(first_col_xy_temp)
+
+# project to wgs84 for latitude
+# ?sf::sf_project
+wgs84_proj_temp <- sf::sf_project(
+  from = terra::crs(dem_1m_rast)
+  , to = sf::st_crs(4326)
+  , pts = first_col_xy_temp
+)
+# head(wgs84_proj_temp)
+# nrow(wgs84_proj_temp)
+# wgs84_proj_temp[,2] %>% head()
+
+
+# make a matrix str to match original raster but each column in a given row will have the same latitude
+lat_mat_temp <- dplyr::tibble(
+  n = 1:nrow(wgs84_proj_temp)
+  , lat = wgs84_proj_temp[,2]
+)
+# # matrix(
+# #   wgs84_proj_temp[,2]
+# #   , nrow = terra::nrow(dem_1m_rast)
+# #   , ncol = terra::ncol(dem_1m_rast)
+# #   , byrow = F
+# # )
+# # lat_mat_temp[1:5, 1:10]
+# lat_mat_temp %>% head()
+
+# ?terra::init
+# terra::init(dem_1m_rast, "row") %>% terra::plot()
+# template raster
+row_rast_temp <- terra::init(dem_1m_rast, fun="row")
+
+# ?terra::classify
+# reclassify row numeric values to lat values
+f1_temp <- file.path(dirname(dem_fnm_temp), "lat_degrees_rast.tif" )
+if(!file.exists(f1_temp)){
+  lat_degrees_rast <- terra::classify(row_rast_temp, rcl = lat_mat_temp, filename = f1_temp, overwrite = F)
+}else{
+  lat_degrees_rast <- terra::rast(f1_temp)
+}
+# terra::plot(lat_degrees_rast)
+
+# convert latitude degrees into radians
+f2_temp <- file.path(dirname(dem_fnm_temp), "lat_rad_rast.tif" )
+if(!file.exists(f2_temp)){
+  lat_rad_rast <- 
+    terra::classify( 
+      row_rast_temp
+      , rcl = 
+        lat_mat_temp %>% 
+        dplyr::mutate(lat = lat * (pi / 180)) 
+      , filename = f2_temp, overwrite = F
+    )
+  # # lat_rad_rast <- lat_degrees_rast * (pi / 180)
+}else{
+  lat_rad_rast <- terra::rast(f2_temp)
+}
+names(lat_rad_rast) <- "latitude_radians"
+# lat_rad_rast %>% terra::plot()
+
+# plot
+terra::plot(
+  lat_degrees_rast
+  , col = viridis::mako(n=100)
+  , axes = F
+  , plg = list(
+     title = "latitude (degrees)"
+     , x = "right"
+     , shrink = 0.6
+     , title.cex = 0.8
+     , cex = 0.8
+   )
+)
+terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
+
+# get slope and aspect in radians
+# ?terra::terrain
+f3_temp <- file.path(dirname(dem_fnm_temp), "terrain_rad_rast.tif" )
+f31_temp <- file.path(dirname(dem_fnm_temp), "slope_rad_rast.tif" )
+f32_temp <- file.path(dirname(dem_fnm_temp), "aspect_rad_rast.tif" )
+if(
+  !file.exists(f3_temp) ||
+  !file.exists(f31_temp) ||
+  !file.exists(f32_temp)
+){
+  terrain_rad_rast  <- terra::terrain(dem_1m_rast, v = c("slope","aspect"), unit = "radians", filename = f3_temp, overwrite = T)
+  
+  # because these values are smoothed, the terra::terrain result extent doesn't match with the input data...we need it to
+  # align using the elevation template
+  slope_fixed_temp <- terra::resample(
+    terrain_rad_rast$slope
+    , dem_1m_rast
+    , method = "near"
+    , filename = f31_temp
+    , overwrite = T
+  )
+  
+  # align using the elevation template
+  aspect_fixed_temp <- terra::resample(
+    terrain_rad_rast$aspect
+    , dem_1m_rast
+    , method = "near"
+    , filename = f32_temp
+    , overwrite = T
+  )
+  
+  # combine and rename them to match the terra::terrain structure
+  terrain_rad_rast <- c(
+    slope_fixed_temp
+    , aspect_fixed_temp
+  )
+  names(terrain_rad_rast) <- c("slope","aspect")
+  
+}else{
+  # read them back 
+  slope_fixed_temp <- terra::rast(f31_temp)
+  aspect_fixed_temp <- terra::rast(f32_temp)
+  
+  # combine and rename them to match the terra::terrain structure
+  terrain_rad_rast <- c(
+    slope_fixed_temp
+    , aspect_fixed_temp
+  )
+  names(terrain_rad_rast) <- c("slope","aspect")
+}
+# terra::plot(terrain_rad_rast$slope)
+# terra::plot(terrain_rad_rast$aspect)
+# identical(terra::ext(terrain_rad_rast$slope), terra::ext(dem_1m_rast))
+# identical(terra::ext(terrain_rad_rast$aspect), terra::ext(dem_1m_rast))
+
+# # hillshade?
+# ?terra::shade
+f4_temp <- file.path(dirname(dem_fnm_temp), "shade_rast.tif" )
+if(!file.exists(f4_temp)){
+  shade_rast <- 
+    terra::shade(
+      slope = terrain_rad_rast$slope
+      , aspect = terrain_rad_rast$aspect
+      , angle = 45, direction = 315
+      , filename = f4_temp, overwrite = F
+    )
+}else{
+  shade_rast <- terra::rast(f4_temp)
+}
+
+# terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, mar=c(1,1,1,4))
+# terra::plot(
+#   terrain_rad_rast$aspect
+#   , col = harrypotter::hp(n=100, option = "ravenclaw")
+#   , add = T
+#   , alpha = 0.4
+#   , plg = list(
+#      title = "aspect (rad)"
+#      , x = "right"
+#      , shrink = 0.6
+#      , cex = 0.8
+#    )
+# )
+# # terra::plot(
+# #   dem_1m_rast
+# #   , col = harrypotter::hp(n=100, option = "mischief")
+# #   , add = T
+# #   , alpha = 0.4
+# #   , plg = list(
+# #      title = "Elevation (m)"
+# #      , x = "right"
+# #      , shrink = 0.6
+# #      , cex = 0.8
+# #    )
+# # )
+
+#########################################################
+#########################################################
+# make a function to get HLI
+# calc topographic heat load index (HLI) 
+# McCune & Keon (2002) Eq 2 
+#########################################################
+#########################################################
+get_hli_fn <- function(latitude_radians, slope, aspect){ 
+  get_hli_as_index <- T
+  # folded aspect
+  # # Aspect must first be ‘folded’ about the north-south line, rescaling 0-360 to 0-180
+  #   # , such that NE = NW, E = W, etc.: 
+  
+  if(get_hli_as_index){
+    # To approximate heat load, the equation can be shifted
+    # from a maximum on south slopes to a maximum on southwest slopes and a minimum on northeast slopes.
+    # This is accomplished by ‘folding’ the aspect about the NE - SW line
+    # , such that NE becomes zero degrees and SW becomes 180:
+    
+    #   if aspect in degrees: Folded aspect = | 180 – |aspect – 225| |
+    #   if aspect in radians: Folded aspect = | pi – |aspect – (5pi/4)| |
+    
+    # One then applies the identical
+    # equation as for direct radiation. The result must, however, be considered a unitless index of heat load, since
+    # we have no basis for converting the result into a cumulative measure of temperature, such as degree days
+    
+    folded_aspect <- abs( pi - abs(aspect - (5*pi/4)) )
+  }else{
+    # to get HLI in MJ cm^–2 yr^–1
+    #   if aspect in degrees: Folded aspect = 180 – |Aspect – 180|
+    #   if aspect in radians: Folded aspect = pi - |Aspect – pi|    
+    folded_aspect <- pi - abs(aspect - pi)
+  }
+
+  # terra::plot(folded_aspect)
+  
+  # calc topographic heat load index (HLI) 
+  # see: McCune & Keon (2002) Eq 2 
+  # Eq. 2 increases the R2 to 0.98 by excluding slopes steeper than 60, an inconsequential omission for almost all data sets.
+  # To apply the models in a spreadsheet, set up three columns with the input variables in radians.
+  # This equation returns ln(Rad, MJ cm^–2 yr^–1). It can be returned to an arithmetic scale with the EXP(x) function.
+  hli <- exp(
+    # Eq 1
+    # –1.467 + 
+    # 1.582*COS(G3)*COS(H3) – 
+    # 1.5*COS(I3)*SIN(H3)*SIN(G3) - 
+    # 0.262*SIN(G3)*SIN(H3) + 
+    # 0.607*SIN(I3)*SIN(H3)
+    -1.236 + 
+    ( 1.350*cos(latitude_radians)*cos(slope) ) +
+    ( (-1*1.375)*cos(folded_aspect)*sin(slope)*sin(latitude_radians) ) +
+    ( (-1*0.331)*sin(latitude_radians)*sin(slope) ) + 
+    ( 0.375*sin(folded_aspect)*sin(slope) )
+  )
+  names(hli) <- "hli"
+  
+  # # this doesn't work when used in terra::lapp ... but does when not in lapp?
+  # hli <- terra::ifel(hli > 1, 1, hli)
+  # hli <- terra::ifel(hli < 0, 0, hli)
+  
+  # # this works when used in terra::lapp ... but doesn't when not in lapp?
+  # hli <- ifelse(hli > 1, 1, hli)
+  # hli <- ifelse(hli < 0, 0, hli)
+  
+  return(hli)
+  
+}
+# # testtest
+# get_hli_fn(
+#   latitude_radians = lat_rad_rast[1:100, 1:100, drop = FALSE]
+#   , slope = terrain_rad_rast$slope[1:100, 1:100, drop = FALSE]
+#   , aspect = terrain_rad_rast$aspect[1:100, 1:100, drop = FALSE]
+# ) %>% 
+# terra::plot()
+
+
+# do it with the hli
+# identical(terra::ext(terrain_rad_rast$slope), terra::ext(dem_1m_rast))
+# terra::ext(terrain_rad_rast$slope)
+# terra::ext(dem_1m_rast)
+# ?terra::extend
+# identical(terra::ext(terrain_rad_rast$slope), terra::ext(dem_1m_rast))
+f5_temp <- file.path(dirname(dem_fnm_temp), "hli_1m_rast.tif" )
+if(!file.exists(f5_temp)){
+
+  # combine all required inputs into stack
+  # make sure they have names to match function arguments
+  # make sure they are in the order of the function arguments
+  rast_stack_temp <- c(lat_rad_rast, terrain_rad_rast$slope, terrain_rad_rast$aspect)
+  names(rast_stack_temp) <- c("latitude_radians", "slope", "aspect")
+  
+  # execute directly to disk
+  # ?terra::lapp
+  hli_1m_rast <- terra::lapp(
+    rast_stack_temp
+    , fun = get_hli_fn
+    # # , get_hli_as_index = T
+    , usenames = T
+    
+    , cores = lasR::half_cores()
+    , filename = f5_temp
+    , overwrite = F
+  )
+
+  
+    
+  # ############################################
+  # # this version does math in memory
+  # hli_1m_rast <- get_hli_fn(
+  #   latitude_radians = lat_rad_rast
+  #   , slope = terrain_rad_rast$slope # terra::terrain(dem_1m_rast, v = "slope", unit = "radians")
+  #   , aspect = terrain_rad_rast$aspect # terra::terrain(dem_1m_rast, v = "aspect", unit = "radians")
+  #   , get_hli_as_index = T
+  # ) 
+  # # write
+  # terra::writeRaster(
+  #   hli_1m_rast
+  #   , filename = f5_temp, overwrite = F
+  # )
+  # ############################################
+  # # this version does math in memory
+  
+}else{
+  hli_1m_rast <- terra::rast(f5_temp)
+}
+# terra::minmax(hli_1m_rast)
+hli_1m_rast <- terra::ifel(hli_1m_rast > 1, 1, hli_1m_rast)
+hli_1m_rast <- terra::ifel(hli_1m_rast < 0, 0, hli_1m_rast)
+# terra::minmax(hli_1m_rast)
+names(hli_1m_rast) <- "hli"
+
+# terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, mar=c(1,1,1,4))
+# terra::plot(
+#   hli_1m_rast
+#   , col = viridis::cividis(100)
+#   , add = T
+#   , alpha = 0.4
+#   , plg = list(
+#      title = "HLI"
+#      , x = "right"
+#      , shrink = 0.6
+#      , cex = 0.8
+#    )
+# )
+```
+
+
+```{r, eval = F, include = F}
 # 5. Create Coarse Grain Grid (5-meter Scale) ----
 # Aggregate cuts computational weight while preserving macro-topography averages
-compiled_dem_5m <- terra::aggregate(compiled_dem_1m, fact = 5, fun = "mean")
-hli_5m          <- terra::aggregate(hli_1m, fact = 5, fun = "mean")
+compiled_dem_5m <- terra::aggregate(dem_1m_rast, fact = 5, fun = "mean")
+hli_5m          <- terra::aggregate(hli_1m_rast, fact = 5, fun = "mean")
 
 # Stack the multi-scale structural metrics together for zonal profiling
-terrain_stack_1m <- c(compiled_dem_1m, slope_rad * (180 / pi), hli_1m)
+terrain_stack_1m <- c(dem_1m_rast, slope_rad_rast * (180 / pi), hli_1m_rast)
 names(terrain_stack_1m) <- c("elevation", "slope_deg", "hli")
 
 # 
@@ -1202,11 +1583,11 @@ zonal_metrics <- exactextractr::exact_extract(
 # Normalize the extracted topographic values so variables have equal statistical weight
 clustering_data <- zonal_metrics %>% 
   dplyr::select(mean_elevation, mean_slope, mean_hli) %>% 
-  base::scale()
+  scale()
 
 # Segment the candidate plots into 3 separate homogeneous landforms/cohorts
 set.seed(42)
-kmeans_model <- base::kmeans(clustering_data, centers = 3, nstart = 25)
+kmeans_model <- kmeans(clustering_data, centers = 3, nstart = 25)
 
 # Append the group cohorts back into the spatial data framework
 final_candidate_plots <- candidate_plots_sf %>% 
@@ -1216,6 +1597,17 @@ final_candidate_plots <- candidate_plots_sf %>%
 print(final_candidate_plots)
 
 ```
+
+## Identify Surviving Trees
+
+We used satellite imagery to manually annotate point locations of surviving trees by planting year in planting locations where we felt the most confident in the year and area of the planting. For each planting year, we attempted to manually identify at least 10 surviving trees. Recall that our sampling strategy is presence-focused (i.e. non-random) because we do not know exactly where historical planting occurred, focusing on surviving clusters guarantees that crews are sampling from areas that were actually planted.
+
+
+
+
+
+
+
 
 
 
@@ -2201,7 +2593,7 @@ regional_dbh_height_model_training_data_temp %>%
 #   readr::read_csv(show_col_types = F, progress = F) 
 # treemap_trees_df
 # dbh ~ a * height^b # power function
-# dbh ~ asym * (1 - base::exp(-k * height))^p # Chapman-Richards non-linear formula
+# dbh ~ asym * (1 - exp(-k * height))^p # Chapman-Richards non-linear formula
 # Define the non-linear Chapman-Richards formula for DBH
 dbh_chpmn_rchrds_formula <- brms::bf(
   dbh_cm|weights(tree_weight) ~ asym * (1 - exp(-k * tree_height_m))^p
