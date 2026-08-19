@@ -1146,26 +1146,28 @@ this data is directly from the USGS National Map
 ```{r}
 # DEM covering entire area
 # read in USGS 1m DEM from national map: https://apps.nationalmap.gov/downloader/
-dem_fnm_temp <- "../data/usgs_dem/dem_1m_rast.tif"
+dem_fnm <- "../data/usgs_dem/dem_1m_rast.tif"
 
 # dem_1m_rast <-
-#   list.files(path = dirname(dem_fnm_temp), pattern = "*\\ArapahoRooseveltPikeNF_D23.tif$", full.names = TRUE, recursive = F) %>%
+#   list.files(path = dirname(dem_fnm), pattern = "*\\ArapahoRooseveltPikeNF_D23.tif$", full.names = TRUE, recursive = F) %>%
 #   .[1] %>%
 #   terra::rast()
+# terra::plot(dem_1m_rast)
+# terra::plot(terra::vect(cheesman_sf), col = NA, border = "white", add = T)
 
-if(!file.exists(dem_fnm_temp)){
+if(!file.exists(dem_fnm)){
   dem_list <- 
-    list.files(path = dirname(dem_fnm_temp), pattern = "*\\ArapahoRooseveltPikeNF_D23.tif$", full.names = TRUE, recursive = F) %>% 
+    list.files(path = dirname(dem_fnm), pattern = "*\\ArapahoRooseveltPikeNF_D23.tif$", full.names = TRUE, recursive = F) %>% 
     unique() %>% 
     purrr::map(terra::rast)
 
   # terra::plot(dem_list[[1]])
   
   # combine the rasters into a single unified mosaic dataset
-  dem_1m_rast <- terra::mosaic(terra::sprc(dem_list), fun = "mean", filename = dem_fnm_temp, overwrite=F)
+  dem_1m_rast <- terra::mosaic(terra::sprc(dem_list), fun = "mean", filename = dem_fnm, overwrite=F)
   
 }else{
-  dem_1m_rast <- terra::rast(dem_fnm_temp)
+  dem_1m_rast <- terra::rast(dem_fnm)
 }
 # name
 names(dem_1m_rast) <- "elevation"
@@ -1181,6 +1183,7 @@ terra::plot(
   dem_1m_rast
   , col = harrypotter::hp(n=100, option = "mischief")
   , axes = F
+  , mar=c(1,1,1.6,4)
   , plg = list(
      title = "elevation (m)"
      , x = "right"
@@ -1193,13 +1196,18 @@ terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
 
 ```
 
+```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+remove(list = ls()[grep("_temp",ls())])
+gc()
+```
+
 ### Terrain
 
 now we need to get the terrain inputs for HLI which include: a raster of latitudes, slope, and aspect
 
 we'll start with latitude. literally a raster of latitude values
 
-```{r}
+```{r, results=F, fig.show='asis'}
 ## now we need to get a raster of the WGS84 latitude values
 # # extract cell coordinates and force project the to WGS84 for latitude
 # to limit the data we'll process and since reprojecting lots of data with sf::sf_project(); terra::project(); or sf::st_transform() is slow
@@ -1248,7 +1256,7 @@ row_rast_temp <- terra::init(dem_1m_rast, fun="row")
 
 # ?terra::classify
 # reclassify row numeric values to lat values
-f1_temp <- file.path(dirname(dem_fnm_temp), "lat_degrees_rast.tif" )
+f1_temp <- file.path(dirname(dem_fnm), "lat_degrees_rast.tif" )
 if(!file.exists(f1_temp)){
   lat_degrees_rast <- terra::classify(row_rast_temp, rcl = lat_mat_temp, filename = f1_temp, overwrite = F)
 }else{
@@ -1257,7 +1265,7 @@ if(!file.exists(f1_temp)){
 # terra::plot(lat_degrees_rast)
 
 # convert latitude degrees into radians
-f2_temp <- file.path(dirname(dem_fnm_temp), "lat_rad_rast.tif" )
+f2_temp <- file.path(dirname(dem_fnm), "lat_rad_rast.tif" )
 if(!file.exists(f2_temp)){
   lat_rad_rast <- 
     terra::classify( 
@@ -1279,8 +1287,9 @@ terra::plot(
   lat_degrees_rast
   , col = viridis::mako(n=100)
   , axes = F
+  , mar=c(1,1,1.6,4)
   , plg = list(
-     title = "latitude (degrees)"
+     title = "latitude (deg)"
      , x = "right"
      , shrink = 0.6
      , title.cex = 0.8
@@ -1288,12 +1297,21 @@ terra::plot(
    )
 )
 terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
+```
 
+```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+remove(list = ls()[grep("_temp",ls())])
+gc()
+```
+
+now, let's look at slope and aspect which we can use to make a hillshade, so, from now on we can use the hillshade for plotting
+
+```{r, results=F, fig.show='asis'}
 # get slope and aspect in radians
 # ?terra::terrain
-f3_temp <- file.path(dirname(dem_fnm_temp), "terrain_rad_rast.tif" )
-f31_temp <- file.path(dirname(dem_fnm_temp), "slope_rad_rast.tif" )
-f32_temp <- file.path(dirname(dem_fnm_temp), "aspect_rad_rast.tif" )
+f3_temp <- file.path(dirname(dem_fnm), "terrain_rad_rast.tif" )
+f31_temp <- file.path(dirname(dem_fnm), "slope_rad_rast.tif" )
+f32_temp <- file.path(dirname(dem_fnm), "aspect_rad_rast.tif" )
 if(
   !file.exists(f3_temp) ||
   !file.exists(f31_temp) ||
@@ -1346,7 +1364,7 @@ if(
 
 # # hillshade?
 # ?terra::shade
-f4_temp <- file.path(dirname(dem_fnm_temp), "shade_rast.tif" )
+f4_temp <- file.path(dirname(dem_fnm), "shade_rast.tif" )
 if(!file.exists(f4_temp)){
   shade_rast <- 
     terra::shade(
@@ -1358,33 +1376,78 @@ if(!file.exists(f4_temp)){
 }else{
   shade_rast <- terra::rast(f4_temp)
 }
+```
 
-# terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, mar=c(1,1,1,4))
-# terra::plot(
-#   terrain_rad_rast$aspect
-#   , col = harrypotter::hp(n=100, option = "ravenclaw")
-#   , add = T
-#   , alpha = 0.4
-#   , plg = list(
-#      title = "aspect (rad)"
-#      , x = "right"
-#      , shrink = 0.6
-#      , cex = 0.8
-#    )
-# )
-# # terra::plot(
-# #   dem_1m_rast
-# #   , col = harrypotter::hp(n=100, option = "mischief")
-# #   , add = T
-# #   , alpha = 0.4
-# #   , plg = list(
-# #      title = "Elevation (m)"
-# #      , x = "right"
-# #      , shrink = 0.6
-# #      , cex = 0.8
-# #    )
-# # )
+slope (in radians)
 
+```{r, results=F, fig.show='asis'}
+terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, mar=c(1,1,1.6,4)) #B-L-T-R
+terra::plot(
+  terrain_rad_rast$slope
+  , col = viridis::inferno(100)
+  , add = T
+  , alpha = 0.5
+  , plg = list(
+     title = "slope (rad)"
+     , x = "right"
+     , shrink = 0.6
+     , title.cex = 0.8
+     , cex = 0.8
+   )
+)
+terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
+```
+
+aspect (in radians)
+
+```{r, results=F, fig.show='asis'}
+terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, mar=c(1,1,1.6,4))
+terra::plot(
+  terrain_rad_rast$aspect
+  , col = viridis::turbo(100)
+  , add = T
+  , alpha = 0.5
+  , plg = list(
+     title = "aspect (rad)"
+     , x = "right"
+     , shrink = 0.6
+     , title.cex = 0.8
+     , cex = 0.8
+   )
+)
+terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+remove(list = ls()[grep("_temp",ls())])
+gc()
+```
+
+### HLI
+
+now let's get topographic heat load index (HLI) which was developed to combine slope, folded aspect (i.e., “southwestness”), and latitude to estimate terrain-driven solar heating at a given location ([McCune & Keon 2002: eq. 2](https://doi.org/10.1111/j.1654-1103.2002.tb02087.x)). Higher values of HLI near one are typical on steep southwesterly slopes, while low values near zero are common on steep northeasterly slopes. Moderate values are common in flatter terrain and on northwesterly and southeasterly aspects. 
+
+
+| HLI Cluster Group | Index Range | Topographic Profile | Plant Growth & Microclimate Context |
+| :--- | :--- | :--- | :--- |
+| **Cool / Mesic** | `0.00` to `0.25` | Steep Northeast Slopes | Minimized solar exposure, high moisture retention, and buffered soil temperatures. Protects shade-tolerant understory flora and acts as a climate refugium. |
+| **Cool-Moderate** | `> 0.25` to `0.50` | Mild North/East Slopes & Deep Ravines | Low-to-moderate solar loading. Evapotranspiration rates remain stable, supporting consistent vegetative growth and reliable seed germination. |
+| **Warm-Moderate** | `> 0.50` to `0.75` | Flat Areas / Mild South & West Slopes | Baseline-to-high solar exposure. Typical open-sky growing conditions where photosynthesis is highly active but bounded by standard rainfall cycles. |
+| **Hot / Xeric** | `> 0.75` to `1.00` | Steep Southwest Slopes | Maximized afternoon solar radiation. Elevated thermal stress and rapid soil drying curves create a harsh, drought-prone microclimate selecting for hardy, heat-tolerant plant species. |
+
+define those groupings
+
+```{r}
+hli_grp_df <- tibble::tibble(
+  hli_ll = c(0,0.25,0.5,0.75)
+  , hli_ul = c(0.25,0.5,0.75,1)
+  , hli_grp = c("cool-mesic", "cool-moderate", "warm-moderate", "hot-xeric")
+)
+# hli_grp_df
+```
+
+
+```{r, results=F, fig.show='asis'}
 #########################################################
 #########################################################
 # make a function to get HLI
@@ -1467,7 +1530,7 @@ get_hli_fn <- function(latitude_radians, slope, aspect){
 # terra::ext(dem_1m_rast)
 # ?terra::extend
 # identical(terra::ext(terrain_rad_rast$slope), terra::ext(dem_1m_rast))
-f5_temp <- file.path(dirname(dem_fnm_temp), "hli_1m_rast.tif" )
+f5_temp <- file.path(dirname(dem_fnm), "hli_1m_rast.tif" )
 if(!file.exists(f5_temp)){
 
   # combine all required inputs into stack
@@ -1516,19 +1579,184 @@ hli_1m_rast <- terra::ifel(hli_1m_rast < 0, 0, hli_1m_rast)
 # terra::minmax(hli_1m_rast)
 names(hli_1m_rast) <- "hli"
 
-# terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, mar=c(1,1,1,4))
-# terra::plot(
-#   hli_1m_rast
-#   , col = viridis::cividis(100)
-#   , add = T
-#   , alpha = 0.4
-#   , plg = list(
-#      title = "HLI"
-#      , x = "right"
-#      , shrink = 0.6
-#      , cex = 0.8
-#    )
-# )
+terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, mar=c(1,1,1.6,4))
+terra::plot(
+  hli_1m_rast
+  , col = viridis::cividis(100)
+  , add = T
+  , alpha = 0.5
+  , plg = list(
+     title = "HLI"
+     , x = "right"
+     , shrink = 0.6
+     , title.cex = 0.8
+     , cex = 0.8
+   )
+)
+terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
+```
+
+looks pretty hot. what is the distribution of HLI over this landscape in view?
+
+```{r}
+terra::hist(hli_1m_rast, main = "HLI")
+```
+
+let's make the data more coarse which might help us better visualize high versus low HLI areas
+
+```{r}
+terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, mar=c(1,1,1.6,4))
+# ?terra::aggregate
+terra::aggregate(hli_1m_rast, fact = 20, fun = "median", na.rm = T, cores = lasR::half_cores()) %>% 
+terra::plot(
+  col = viridis::cividis(100)
+  , range = c(0, 1), fill_range = T
+  , add = T
+  , alpha = 0.5
+  , plg = list(
+     title = "HLI"
+     , x = "right"
+     , shrink = 0.6
+     , title.cex = 0.8
+     , cex = 0.8
+   )
+)
+terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
+```
+
+what if we group by those HLI ranges we noted above?
+
+```{r}
+# viridis::cividis(9) %>% scales::show_col()
+pal_hli_grp <- viridis::cividis(9)[c(1,3,7,9)]
+# pal_hli_grp %>% scales::show_col()
+
+terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, mar=c(1,1,2,6))
+# ?terra::aggregate
+terra::aggregate(hli_1m_rast, fact = 20, fun = "median", na.rm = T, cores = lasR::half_cores()) %>% 
+terra::plot(
+  col = pal_hli_grp
+  , breaks = c(0,hli_grp_df$hli_ul)
+  , add = T
+  , alpha = 0.5
+  , plg = list(
+    legend = hli_grp_df$hli_grp
+    , col = pal_hli_grp
+     , title = "HLI Class"
+     # , x = "top"
+     # , shrink = 0.6
+     , title.cex = 0.8
+     , cex = 0.8
+   )
+)
+terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
+```
+
+yeah, not many cool-mesic areas
+
+## Surviving Tree Candidate Areas
+
+We used satellite imagery to manually annotate point locations of surviving trees by planting year in planting locations where we felt the most confident in the year and area of the planting. For each planting year, we attempted to manually identify at least 10 surviving trees. Recall that our sampling strategy is presence-focused (i.e. non-random) because we do not know exactly where historical planting occurred, focusing on surviving clusters guarantees that crews are sampling from areas that were actually planted.
+
+let's check those candidate sample locations centered on surviving tree point locations
+
+```{r}
+# I went about to getting at least 10 trees per planting year. 
+# I tried to capture areas that encompass the entire planting areas for each planting year,
+# but trees were admittedly a little sparse, 
+# which made me make it a bit more dense in areas where there was good survival. 
+known_trees_sf <-
+  readxl::read_excel("../data/Trees_PlantingYears0406070913.xlsx") %>% 
+  dplyr::rename_with(tolower) %>% 
+  dplyr::filter(!is.na(plantingyear), !is.na(lat), !is.na(long)) %>% 
+  sf::st_as_sf(coords = c("long","lat"), crs = sf::st_crs(4326), remove=F) %>%  
+  sf::st_transform(terra::crs(dem_1m_rast)) %>% 
+  dplyr::rename(planting_year=plantingyear) %>% 
+  dplyr::group_by(planting_year) %>% 
+  dplyr::mutate(year_tree_id = dplyr::row_number()) %>% 
+  dplyr::ungroup()
+```
+
+where are our candidate plot centers (i.e. known tree locations)?
+
+```{r}
+# known_trees_sf %>% dplyr::glimpse()
+# plot
+terra::plot(
+  dem_1m_rast
+  , col = harrypotter::hp(n=100, option = "mischief")
+  , axes = F
+  , mar=c(1,1,1.6,4)
+  , plg = list(
+     title = "elevation (m)"
+     , x = "right"
+     , shrink = 0.6
+     , title.cex = 0.8
+     , cex = 0.8
+   )
+)
+terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
+terra::plot(terra::vect(known_trees_sf), col = "cyan", add = T)
+
+# terra::plot(terra::vect(known_trees_sf), col = "cyan")
+# terra::plot(dem_1m_rast, alpha = 0.3, add=T)
+# terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
+
+```
+
+
+```{r}
+candidate_centers <- known_trees_sf %>%  
+  dplyr::group_by(planting_year) %>% 
+  dplyr::slice_head(n = 10) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(plot_id = dplyr::row_number())
+
+# 6. Generate 1-Acre Square Sample Units ----
+# Buffer the point centers outward by 31.8 meters using square cap boundaries
+# This outputs a perfectly uniform square measuring exactly 1 acre (4,046 m2)
+candidate_plots_sf <- sf::st_buffer(
+  x = candidate_centers, 
+  dist = 31.8, 
+  endCapStyle = "SQUARE"
+)
+
+
+```
+
+
+We'll use the following three topographic variables to capture an independent set of environmental conditions:
+
+* Elevation: Controls for elevational shifts, such as temperature and precipitation
+* Slope: Controls for structural physical dynamics, such as gravity-driven water drainage, soil erosion rates, and UAS sensor orientation/stretching during imagery capture.
+* HLI: Controls for localized solar exposure and moisture deficits
+
+```{r, eval = F, include = F}
+# 1. Select Only Non-Redundant Zonal Averages ----
+# Explicitly drop raw aspect to prevent mathematical duplication and circular alignment errors
+clustering_inputs <- final_candidate_plots |> 
+  sf::st_drop_geometry() |> 
+  dplyr::select(mean_elevation, mean_slope, mean_hli)
+
+# 2. Standardize the Variances (Z-Score Scaling) ----
+# Center and scale variables so they all share a Mean of 0 and Standard Deviation of 1
+scaled_inputs <- base::scale(clustering_inputs)
+
+# 3. Execute K-Means Partitioning ----
+# Group the candidate plots into 3 structurally unique landscape cohorts
+base::set.seed(42) # Guarantees identical clusters every time the script is run
+kmeans_model <- base::kmeans(
+  x = scaled_inputs, 
+  centers = 3, 
+  nstart = 25 # Runs 25 random starts to guarantee finding the most stable grouping
+)
+
+# 4. Bind the Homogeneous Cohort Groups Back to the Spatial Framework ----
+final_candidate_plots <- final_candidate_plots |> 
+  dplyr::mutate(topo_group_cohort = base::as.factor(kmeans_model$cluster))
+
+print(final_candidate_plots)
+
 ```
 
 
@@ -1543,27 +1771,6 @@ terrain_stack_1m <- c(dem_1m_rast, slope_rad_rast * (180 / pi), hli_1m_rast)
 names(terrain_stack_1m) <- c("elevation", "slope_deg", "hli")
 
 # 
-# I went about to getting at least 10 trees per planting year. 
-# I tried to capture areas that encompass the entire planting areas for each planting year,
-# but trees were admittedly a little sparse, 
-# which made me make it a bit more dense in areas where there was good survival. 
-
-# 6. Generate 1-Acre Square Sample Units ----
-# Assume 'known_trees_sf' contains spatial point geometries and a 'planting_year' column
-# We sample 10 candidates per planting year
-candidate_centers <- known_trees_sf %>%  
-  dplyr::group_by(planting_year) %>% 
-  dplyr::slice_head(n = 10) %>% 
-  dplyr::ungroup() %>% 
-  dplyr::mutate(plot_id = dplyr::row_number())
-
-# Buffer the point centers outward by 31.8 meters using square cap boundaries
-# This outputs a perfectly uniform square measuring exactly 1 acre (4,046 m2)
-candidate_plots_sf <- sf::st_buffer(
-  x = candidate_centers, 
-  dist = 31.8, 
-  endCapStyle = "SQUARE"
-)
 
 # 7. Extract Exact Zonal Topographic Statistics ----
 # exactextractr::exact_extract computes perfect area-weighted means for overlapping edge cells
@@ -1597,11 +1804,6 @@ final_candidate_plots <- candidate_plots_sf %>%
 print(final_candidate_plots)
 
 ```
-
-## Identify Surviving Trees
-
-We used satellite imagery to manually annotate point locations of surviving trees by planting year in planting locations where we felt the most confident in the year and area of the planting. For each planting year, we attempted to manually identify at least 10 surviving trees. Recall that our sampling strategy is presence-focused (i.e. non-random) because we do not know exactly where historical planting occurred, focusing on surviving clusters guarantees that crews are sampling from areas that were actually planted.
-
 
 
 
