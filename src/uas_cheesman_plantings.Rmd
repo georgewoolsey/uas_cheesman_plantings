@@ -259,7 +259,7 @@ cloud2raster_ans$dtm_rast %>%
 
 we'll use the DTM + RGB extent to create a stand polygon since we don't have a stand poly and want to use it to filter data for edge effects (i.e. remove data along edges of data collection extent)
 
-```{r}
+```{r, results=F}
 stand_sf <- 
   cloud2raster_ans$dtm_rast %>% 
   terra::not.na(falseNA=T) %>% 
@@ -284,7 +284,7 @@ stand_sf <-
 
 and we'll make sure the stand that we defined above includes the mass of both the data collection (RGB and DTM) while removing edges
 
-```{r}
+```{r, results=F, fig.show='asis'}
 cloud2raster_ans$dtm_rast %>% 
   terra::plot(col = harrypotter::hp(n=100, option = "mischief"), main = "DTM (m) + 'stand' boundary", axes = F)
 stand_sf %>% 
@@ -1072,19 +1072,22 @@ Remember, the primary objective of this project is to evaluate the success of th
 
 Because counting every surviving tree across the expansive planting footprint is logistically and financially impossible, we are using UAS data to achieve a near-census of live trees. However, to trust those landscape-scale estimates, we must first use targeted field plots to validate the accuracy of our UAS workflow. 
 
-Specifically, the field collection will answer targeted validation questions across three core dimensions:
+Specifically, the field collection will be used to answer UAS-workflow validation questions across the following dimensions:
 
 **Tree Detection Accuracy**
+
 * Recall: What proportion of actual, ground-verified trees did the UAS method successfully detect?
 * Precision: What proportion of UAS-predicted trees were actual, verified trees on the ground?
 * F-score: What is the overall, balanced tree-level detection accuracy of the UAS method?
 
 **Live Tree Density (Trees Per Acre - TPA)**
+
 * TPA RMSE: How precise is the UAS method at measuring live tree density at the planting unit level?
 * TPA Mean Error: What is the directional bias (over- or under-estimation) of the UAS density estimates compared to field-measured values?
 * TPA MAPE: What is the average relative percentage error of the UAS density estimates?
 
 **Tree-Level Physical Form**
+
 * Height RMSE: How precise are the UAS photogrammetry height estimates compared to physical field measurements?
 * Height Mean Error: What is the directional bias of the UAS height estimates?
 * Height MAPE: What is the average relative percentage error of the UAS height estimates?
@@ -1097,7 +1100,7 @@ The primary objective of this work is to answer the question *how successful wer
 2.  Spatial Uncertainty: Precise planting maps, boundaries, and spatial patterns were not well recorded.
 3.  Methodological Shifts: Tree planting techniques changed over time.
 4.  Overlapping Efforts: Several areas had multiple, compounding planting missions.
-5.  Financial Constraints: Manually surveying the expansive planting area is costly and financiall infeasible.
+5.  Financial Constraints: Manually surveying the expansive planting area is costly and financially infeasible.
 6.  Extrapolation Risks: Relying solely on traditional field plots requires extrapolating limited sample sizes over broad, heterogeneous landscapes.
 
 To mitigate these constraints, our field data collection will prioritize a targeted, non-random sampling strategy focused on the following:
@@ -1108,7 +1111,7 @@ To mitigate these constraints, our field data collection will prioritize a targe
 
 ## Topography Data
 
-Because the primary goal of this field work is to validate the UAS method, we must ensure that our validation metrics (F-score, RMSE, and MAPE) are testing the algorithm's performance across different tree structures, rather than being skewed by external environmental factors. Topography can alter UAS sensor data by introducing variable lighting geometries (shadowing vs. solar glare) and geometric distortions in the DAP reconstructions on steep slopes. To isolate how well the UAS workflow performs across different tree sizes and ages (i.e. planting years), we will attempt to distribute field plots across matching topographic cohorts (slope and aspect profiles) across all target planting years. This controls for terrain-induced sensor changes.
+Because the primary goal of this field work is to validate the UAS method, we must ensure that our validation metrics (F-score, RMSE, and MAPE) are testing the algorithm's performance across different tree structures, rather than being skewed by external environmental factors. Topography can alter UAS sensor data by introducing variable lighting geometries (shadowing, solar glare, etc.) and geometric distortions in the DAP reconstructions (e.g., on steep slopes). To isolate how well the UAS workflow performs across different tree sizes and ages (i.e. planting years), we will attempt to distribute field plots across matching topographic cohorts (slope and aspect profiles) across all target planting years. This controls for terrain-induced sensor changes.
 
 We downloaded a 1m DEM from the [USGS National Map](https://apps.nationalmap.gov/downloader/) and here is an example DEM tile with it's [metadata](https://www.sciencebase.gov/catalog/item/69c20ed8b66b01d6ebf33cae)
 
@@ -1604,7 +1607,7 @@ terra::hist(hli_1m_rast, main = "HLI")
 
 let's make the data more coarse which might help us better visualize high versus low HLI areas
 
-```{r}
+```{r, results=F, fig.show='asis', fig.height=9, fig.width=5.5}
 terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, mar=c(1,1,1.6,4))
 # ?terra::aggregate
 terra::aggregate(hli_1m_rast, fact = 20, fun = "median", na.rm = T, cores = lasR::half_cores()) %>% 
@@ -1626,7 +1629,7 @@ terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
 
 what if we group by those HLI classes we noted above?
 
-```{r}
+```{r, results=F, fig.show='asis', fig.height=9, fig.width=5.5}
 # viridis::cividis(16) %>% scales::show_col()
 pal_hli_grp <- viridis::cividis(16)[c(1,5,12,16)]
 # pal_hli_grp %>% scales::show_col()
@@ -1722,7 +1725,7 @@ known_trees_sf <-
 
 where are our candidate plot centers (i.e. known tree locations)?
 
-```{r}
+```{r, results=F, fig.show='asis', fig.height=9, fig.width=5.5}
 # known_trees_sf %>% dplyr::glimpse()
 # plot
 terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, mar=c(1,1,1.6,4))
@@ -1813,7 +1816,7 @@ We'll use the following three topographic variables to capture an independent se
 * Slope: Controls for structural physical dynamics, such as gravity-driven water drainage, soil erosion rates, and UAS sensor orientation/stretching during imagery capture.
 * HLI: Controls for localized solar exposure and moisture deficits
 
-```{r}
+```{r, results=F}
 # stack
 terrain_stack_1m_temp <- c(dem_1m_rast, terrain_rad_rast$slope, hli_1m_rast)
 names(terrain_stack_1m_temp) <- c("elevation", "slope", "hli")
@@ -2023,6 +2026,7 @@ plt_temp <-
 ```
 
 ```{r,eval=T, fig.height = 11, fig.width = 6.6}
+print(plt_temp)
 ggplot2::ggsave("../data/ex_environmental_covariates.jpg", plot = plt_temp, height = 11, width = 6.6)
 ```
 
@@ -2035,9 +2039,9 @@ gc()
 
 ### Identify Similar Candidate Plot Locations
 
-To isolate how well the UAS workflow performs across different tree sizes and ages (planting years) using the field validation data, we need to establish matching topographic plot locations across the planting years. By selecting sample plot locations (non-random) that are topographically similar, we can better isolate the independent variable we are seeking to monitor -- tree presence and structure as measured by the UAS -- from sensor artifacts caused by slope steepness and lighting geometry (shadows/glare).
+To isolate how well the UAS workflow performs across different tree sizes and ages (planting years) using the field validation data, we need to establish matching topographic plot locations across the planting years. By selecting sample plot locations (non-random) that are topographically similar, we can better isolate the independent variable we are seeking to monitor — tree presence and structure as measured by the UAS — from sensor artifacts caused by topography (e.g., slope steepness, lighting conditions like shadows and glare).
 
-To control for terrain-based UAS sensor changes and generate an unbiased validation data set of field-measured values, we'll use a statistical Euclidean nearest-neighbor matching process to create plot sets by calculating the SSE across multidimensional *non-spatial* covariates (i.e. elevation, slope, and HLI). By minimizing the SSE across the possible planting year plot combinations, this workflow groups the candidate plot polygons into matching/similar topographic cohorts.
+To control for terrain-based UAS sensor changes and generate an unbiased validation data set of field-measured values, we'll use a statistical — *not a spatial* — Euclidean nearest-neighbor matching process to create plot sets by calculating the SSE across multidimensional covariates (i.e. elevation, slope, and HLI). By minimizing the SSE across the possible planting year plot combinations, this workflow groups the candidate plot polygons into matching/similar topographic cohorts.
 
 ```{r}
 get_best_match_set_temp <- function(my_plot_area_ac) {
@@ -2178,7 +2182,7 @@ as a reminder of what we are looking at:
 
 because the selected plot locations have similar topographic profiles, we have controlled for conditions, as best we can, which might influence the UAS sensor data collection. As a result, when we calculate our UAS validation metrics (F-score, RMSE, MAPE) based on the field data, the influence of slope steepness, terrain roughness, or shifting lighting conditions (shadows and glare) will be minimized.
 
-```{r, fig.height=8, fig.width=9}
+```{r, fig.height=10, fig.width=9}
 plt_matrix_temp <- function(my_plot_area_ac) {
   GGally::ggpairs(
     data = 
@@ -2202,7 +2206,7 @@ plt_matrix_temp <- function(my_plot_area_ac) {
       , fill  = is_best_plot_set 
       , shape = planting_year
     )
-    , lower = list(continuous = GGally::wrap("points", size = 2.2, alpha = 0.9))
+    , lower = list(continuous = GGally::wrap("points", size = 1.7, alpha = 0.9))
     , upper = "blank"
     , axisLabels = "show"
     , switch     = "both"
@@ -2225,7 +2229,7 @@ plt_matrix_temp <- function(my_plot_area_ac) {
     ) +
     ggplot2::theme_light() +
     ggplot2::theme(
-      strip.text = ggplot2::element_text(size = 10, face = "bold", color = "black")
+      strip.text = ggplot2::element_text(size = 8, face = "bold", color = "black")
       # , strip.background = ggplot2::element_blank()
       , strip.placement = "outside"
       
@@ -2294,7 +2298,10 @@ matched_pairs_df %>%
   kableExtra::kbl(
     caption = "top 5 plot location sets (1 set = 1 plot per planting year) based on topographic similarity"
   ) %>% 
-  kableExtra::kable_styling() %>% 
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped")
+    , latex_options = c("striped")
+  ) %>% 
   kableExtra::collapse_rows(1)
 ```
 
