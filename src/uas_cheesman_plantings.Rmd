@@ -1105,7 +1105,7 @@ To mitigate these constraints, our field data collection will prioritize a targe
 2) Sampling within target planting years will focus on areas with known tree survival. Because we do not know exactly where historical planting occurred, focusing on surviving clusters guarantees that field sampling takes place in areas that were actually planted. This avoids wasting field time on areas that were either never planted or suffered total mortality (which we wouldn't know because we don't know exactly were plants went in the ground).
 3) We will sample a large enough area to ensure a representative count of survivors for each target year. Historical data indicates that all planting missions targeted a density of ~100 trees per acre. Therefore, an entire acre sample should ideally yield ~100 trees under 100% survivability conditions, while a half-acre sample should yield ~50 trees, and so on.
 
-## Topography
+## Topography Data
 
 Because the primary goal of this field work is to validate the UAS method, we must ensure that our validation metrics (F-score, RMSE, and MAPE) are testing the algorithm's performance across different tree structures, rather than being skewed by external environmental factors. Topography can alter UAS sensor data by introducing variable lighting geometries (shadowing vs. solar glare) and geometric distortions in the DAP reconstructions on steep slopes. To isolate how well the UAS workflow performs across different tree sizes and ages (i.e. planting years), we will attempt to distribute field plots across matching topographic cohorts (slope and aspect profiles) across all target planting years. This controls for terrain-induced sensor changes.
 
@@ -1143,7 +1143,7 @@ gc()
 
 this data is directly from the USGS National Map
 
-```{r}
+```{r, results=F, fig.show='asis', fig.height=9, fig.width=5.5}
 # DEM covering entire area
 # read in USGS 1m DEM from national map: https://apps.nationalmap.gov/downloader/
 dem_fnm <- "../data/usgs_dem/dem_1m_rast.tif"
@@ -1207,7 +1207,7 @@ now we need to get the terrain inputs for HLI which include: a raster of latitud
 
 we'll start with latitude. literally a raster of latitude values
 
-```{r, results=F, fig.show='asis'}
+```{r, results=F, fig.show='asis', fig.height=9, fig.width=5.5}
 ## now we need to get a raster of the WGS84 latitude values
 # # extract cell coordinates and force project the to WGS84 for latitude
 # to limit the data we'll process and since reprojecting lots of data with sf::sf_project(); terra::project(); or sf::st_transform() is slow
@@ -1306,7 +1306,7 @@ gc()
 
 now, let's look at slope and aspect which we can use to make a hillshade, so, from now on we can use the hillshade for plotting
 
-```{r, results=F, fig.show='asis'}
+```{r, results=F, fig.show='asis', fig.height=9, fig.width=5.5}
 # get slope and aspect in radians
 # ?terra::terrain
 f3_temp <- file.path(dirname(dem_fnm), "terrain_rad_rast.tif" )
@@ -1380,13 +1380,13 @@ if(!file.exists(f4_temp)){
 
 slope (in radians)
 
-```{r, results=F, fig.show='asis'}
+```{r, results=F, fig.show='asis', fig.height=9, fig.width=5.5}
 terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, mar=c(1,1,1.6,4)) #B-L-T-R
 terra::plot(
   terrain_rad_rast$slope
   , col = viridis::inferno(100)
   , add = T
-  , alpha = 0.5
+  , alpha = 0.4
   , plg = list(
      title = "slope (rad)"
      , x = "right"
@@ -1400,7 +1400,7 @@ terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
 
 aspect (in radians)
 
-```{r, results=F, fig.show='asis'}
+```{r, results=F, fig.show='asis', fig.height=9, fig.width=5.5}
 terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, mar=c(1,1,1.6,4))
 terra::plot(
   terrain_rad_rast$aspect
@@ -1427,15 +1427,14 @@ gc()
 
 now let's get topographic heat load index (HLI) which was developed to combine slope, folded aspect (i.e., “southwestness”), and latitude to estimate terrain-driven solar heating at a given location ([McCune & Keon 2002: eq. 2](https://doi.org/10.1111/j.1654-1103.2002.tb02087.x)). Higher values of HLI near one are typical on steep southwesterly slopes, while low values near zero are common on steep northeasterly slopes. Moderate values are common in flatter terrain and on northwesterly and southeasterly aspects. 
 
-
 | HLI Cluster Group | Index Range | Topographic Profile | Plant Growth & Microclimate Context |
 | :--- | :--- | :--- | :--- |
-| **Cool / Mesic** | `0.00` to `0.25` | Steep Northeast Slopes | Minimized solar exposure, high moisture retention, and buffered soil temperatures. Protects shade-tolerant understory flora and acts as a climate refugium. |
-| **Cool-Moderate** | `> 0.25` to `0.50` | Mild North/East Slopes & Deep Ravines | Low-to-moderate solar loading. Evapotranspiration rates remain stable, supporting consistent vegetative growth and reliable seed germination. |
-| **Warm-Moderate** | `> 0.50` to `0.75` | Flat Areas / Mild South & West Slopes | Baseline-to-high solar exposure. Typical open-sky growing conditions where photosynthesis is highly active but bounded by standard rainfall cycles. |
-| **Hot / Xeric** | `> 0.75` to `1.00` | Steep Southwest Slopes | Maximized afternoon solar radiation. Elevated thermal stress and rapid soil drying curves create a harsh, drought-prone microclimate selecting for hardy, heat-tolerant plant species. |
+| **Cool / Mesic** | `0.00` to `0.25` | Steep Northeast Slopes | Minimized solar exposure, high moisture retention, and buffered soil temperatures. Protects shade-tolerant vegetation and acts as a climate refugium. |
+| **Cool-Moderate** | `> 0.25` to `0.50` | Mild North/East Slopes & Deep Ravines | Low-to-moderate solar loading. Evapotranspiration rates stable, productive vegetative growth and reliable seed germination. |
+| **Warm-Moderate** | `> 0.50` to `0.75` | Flat Areas / Mild South & West Slopes | Baseline-to-high solar exposure. Typical open-sky growing conditions where photosynthesis is highly active but constrainted by precipitation and soil moisture. |
+| **Hot / Xeric** | `> 0.75` to `1.00` | Steep Southwest Slopes | Maximum afternoon solar radiation. Elevated thermal stress and rapid soil drying curves create a harsh, drought-prone microclimate selecting for hardy, heat-tolerant plant species. |
 
-define those groupings
+define those groupings in a data frame
 
 ```{r}
 hli_grp_df <- tibble::tibble(
@@ -1446,8 +1445,7 @@ hli_grp_df <- tibble::tibble(
 # hli_grp_df
 ```
 
-
-```{r, results=F, fig.show='asis'}
+```{r, results=F, fig.show='asis', fig.height=9, fig.width=5.5}
 #########################################################
 #########################################################
 # make a function to get HLI
@@ -1583,6 +1581,7 @@ terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, 
 terra::plot(
   hli_1m_rast
   , col = viridis::cividis(100)
+  , range = c(0, 1), fill_range = T
   , add = T
   , alpha = 0.5
   , plg = list(
@@ -1598,7 +1597,7 @@ terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
 
 looks pretty hot. what is the distribution of HLI over this landscape in view?
 
-```{r}
+```{r, warning=F}
 terra::hist(hli_1m_rast, main = "HLI")
 ```
 
@@ -1624,16 +1623,17 @@ terra::plot(
 terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
 ```
 
-what if we group by those HLI ranges we noted above?
+what if we group by those HLI classes we noted above?
 
 ```{r}
-# viridis::cividis(9) %>% scales::show_col()
-pal_hli_grp <- viridis::cividis(9)[c(1,3,7,9)]
+# viridis::cividis(16) %>% scales::show_col()
+pal_hli_grp <- viridis::cividis(16)[c(1,5,12,16)]
 # pal_hli_grp %>% scales::show_col()
 
 terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, mar=c(1,1,2,6))
 # ?terra::aggregate
-terra::aggregate(hli_1m_rast, fact = 20, fun = "median", na.rm = T, cores = lasR::half_cores()) %>% 
+hli_20m_rast_temp <- terra::aggregate(hli_1m_rast, fact = 20, fun = "median", na.rm = T, cores = lasR::half_cores())
+hli_20m_rast_temp %>% 
 terra::plot(
   col = pal_hli_grp
   , breaks = c(0,hli_grp_df$hli_ul)
@@ -1654,11 +1654,45 @@ terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
 
 yeah, not many cool-mesic areas
 
+we can check out the distribution of HLI aggregated to 20m cells by those groupings
+
+```{r}
+hli_20m_rast_temp %>% 
+  terra::classify(rcl=c(0,hli_grp_df$hli_ul), include.lowest=F) %>% 
+  terra::freq() %>% 
+  dplyr::select(-layer) %>% 
+  dplyr::rename(hli=1) %>% 
+  dplyr::mutate(
+    hli_ul = 
+      stringr::str_sub(hli, start = stringr::str_locate(hli,"-")[,1]+1, end = stringr::str_length(hli)-1 ) %>%
+      stringr::str_squish() %>%
+      as.numeric()
+  ) %>% 
+  dplyr::left_join(hli_grp_df %>% dplyr::select(hli_ul,hli_grp)) %>% 
+  dplyr::select(-hli_ul) %>% 
+  dplyr::relocate(hli,hli_grp) %>% 
+  dplyr::mutate(
+    percent = scales::percent(count/sum(count), accuracy=0.1)
+    , count = scales::comma(count, accuracy=1)
+  ) %>% 
+  dplyr::rename(
+    `HLI Range`=hli
+    , `HLI Class`=hli_grp
+  ) %>% 
+  kableExtra::kbl(caption = "distribution of HLI class in Cheesman Reservoir landscape") %>% 
+  kableExtra::kable_styling()
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+remove(list = ls()[grep("_temp",ls())])
+gc()
+```
+
 ## Surviving Tree Candidate Areas
 
 We used satellite imagery to manually annotate point locations of surviving trees by planting year in planting locations where we felt the most confident in the year and area of the planting. For each planting year, we attempted to manually identify at least 10 surviving trees. Recall that our sampling strategy is presence-focused (i.e. non-random) because we do not know exactly where historical planting occurred, focusing on surviving clusters guarantees that crews are sampling from areas that were actually planted.
 
-let's check those candidate sample locations centered on surviving tree point locations
+let's check those candidate sample plot locations centered on surviving tree points
 
 ```{r}
 # I went about to getting at least 10 trees per planting year. 
@@ -1673,8 +1707,16 @@ known_trees_sf <-
   sf::st_transform(terra::crs(dem_1m_rast)) %>% 
   dplyr::rename(planting_year=plantingyear) %>% 
   dplyr::group_by(planting_year) %>% 
-  dplyr::mutate(year_tree_id = dplyr::row_number()) %>% 
+  dplyr::mutate(
+    year_tree_id = dplyr::row_number()
+    , year_tree_fact = forcats::fct_cross(
+      factor(planting_year)
+      , factor(year_tree_id)
+      ,sep = "_"
+    )
+  ) %>% 
   dplyr::ungroup()
+# known_trees_sf %>% dplyr::glimpse()
 ```
 
 where are our candidate plot centers (i.e. known tree locations)?
@@ -1682,11 +1724,12 @@ where are our candidate plot centers (i.e. known tree locations)?
 ```{r}
 # known_trees_sf %>% dplyr::glimpse()
 # plot
+terra::plot(shade_rast, col = grDevices::gray(0:100/100), legend = F, axes = F, mar=c(1,1,1.6,4))
 terra::plot(
   dem_1m_rast
   , col = harrypotter::hp(n=100, option = "mischief")
-  , axes = F
-  , mar=c(1,1,1.6,4)
+  , add = T
+  , alpha = 0.6
   , plg = list(
      title = "elevation (m)"
      , x = "right"
@@ -1696,7 +1739,7 @@ terra::plot(
    )
 )
 terra::plot(terra::vect(cheesman_sf), col = NA, border = "black", add = T)
-terra::plot(terra::vect(known_trees_sf), col = "cyan", add = T)
+terra::plot(terra::vect(known_trees_sf), col = "cyan", cex = 0.6, add = T)
 
 # terra::plot(terra::vect(known_trees_sf), col = "cyan")
 # terra::plot(dem_1m_rast, alpha = 0.3, add=T)
@@ -1704,26 +1747,64 @@ terra::plot(terra::vect(known_trees_sf), col = "cyan", add = T)
 
 ```
 
+let's put those on an interactive map
 
 ```{r}
-candidate_centers <- known_trees_sf %>%  
-  dplyr::group_by(planting_year) %>% 
-  dplyr::slice_head(n = 10) %>% 
-  dplyr::ungroup() %>% 
-  dplyr::mutate(plot_id = dplyr::row_number())
-
-# 6. Generate 1-Acre Square Sample Units ----
-# Buffer the point centers outward by 31.8 meters using square cap boundaries
-# This outputs a perfectly uniform square measuring exactly 1 acre (4,046 m2)
-candidate_plots_sf <- sf::st_buffer(
-  x = candidate_centers, 
-  dist = 31.8, 
-  endCapStyle = "SQUARE"
-)
-
-
+known_trees_sf %>% 
+  dplyr::mutate(planting_year=factor(planting_year)) %>% 
+  mapview::mapview(zcol = "planting_year", layer.name="known trees")
 ```
 
+nice. let's buffer each potential plot location to create square areas of 0.5 and 1 acres
+
+```{r}
+make_square_plots_fn <- function(sf, plot_acres) {
+  if (!inherits(sf, "sf")) {
+    stop("sf must be an sf object.")
+  }
+
+  if(
+    !is.numeric(plot_acres) ||
+    length(plot_acres) != 1 ||
+    is.na(plot_acres) ||
+    plot_acres <= 0
+  ){
+    stop("plot_acres must be a single positive numeric value")
+  }
+
+  if(sf::st_is_longlat(sf)) {
+    stop("sf must use a projected CRS with linear units as meters")
+  }
+
+  # Convert acres to square meters
+  area_m2 <- plot_acres * 4046.8564224
+
+  # Square side length, then half-side for the buffer radius
+  radius_m <- sqrt(area_m2) / 2
+
+  # Create square polygons centered on each point
+  sf::st_buffer(
+    sf
+    , dist = radius_m
+    , endCapStyle = "SQUARE"
+  )
+}
+# make a few options
+candidate_plots_sf <- dplyr::bind_rows(
+  known_trees_sf %>% make_square_plots_fn(0.5) %>% dplyr::mutate(plot_area_ac = 0.5)
+  , known_trees_sf %>% make_square_plots_fn(1.0) %>% dplyr::mutate(plot_area_ac = 1.0)
+)
+
+# dplyr::glimpse(candidate_plots_sf)
+# candidate_plots_sf %>% 
+#   dplyr::mutate(
+#     area_m2 = sf::st_area(.) %>% as.numeric()
+#     , area_ac = area_m2/4046.86
+#   ) %>% 
+#   sf::st_drop_geometry() %>% 
+#   dplyr::mutate(dplyr::across(tidyselect::contains("area_"), ~round(.x,2) %>% scales::comma(accuracy = 0.01) )) %>% 
+#   dplyr::count(plot_area_ac, area_ac, area_m2)
+```
 
 We'll use the following three topographic variables to capture an independent set of environmental conditions:
 
@@ -1731,11 +1812,446 @@ We'll use the following three topographic variables to capture an independent se
 * Slope: Controls for structural physical dynamics, such as gravity-driven water drainage, soil erosion rates, and UAS sensor orientation/stretching during imagery capture.
 * HLI: Controls for localized solar exposure and moisture deficits
 
+```{r}
+# stack
+terrain_stack_1m_temp <- c(dem_1m_rast, terrain_rad_rast$slope, hli_1m_rast)
+names(terrain_stack_1m_temp) <- c("elevation", "slope", "hli")
+# terrain_stack_1m_temp
+
+# exactextractr::exact_extract for zonal stats
+candidate_plots_zonal <-
+  exactextractr::exact_extract(
+    x = terrain_stack_1m_temp
+    , y = candidate_plots_sf
+    , fun = c("mean", "stdev")
+    , append_cols = c("year_tree_fact", "plot_area_ac")
+  ) %>% 
+  dplyr::rename_with(~stringr::str_replace_all(.x,"\\.","_")) %>% 
+  # drop elevation stdev since it is collinear with mean slope
+  dplyr::select(-stdev_elevation)
+# add geoms
+candidate_plots_zonal <- candidate_plots_sf %>% 
+  dplyr::inner_join(
+    candidate_plots_zonal
+    , by = dplyr::join_by(year_tree_fact, plot_area_ac)
+  )
+# candidate_plots_zonal %>% dplyr::glimpse()
+```
+
+let's visualize those environmental values for the 1.0 acre candidate plots for a single planting year unit as an example
+
+```{r,eval=F}
+ex_temp <- 
+  candidate_plots_zonal %>% 
+  dplyr::filter(
+    plot_area_ac==1.0
+    , planting_year == known_trees_sf$planting_year[1]
+  )
+aoi_temp <- ex_temp %>% sf::st_buffer(22) %>% sf::st_union() %>% sf::st_bbox() %>% sf::st_as_sfc()
+# ggplot2::ggplot() +
+#   # cheesman
+#   ggplot2::geom_sf(
+#     data = cheesman_sf %>% sf::st_intersection(aoi_temp)
+#     , fill = NA, color = "black"
+#   ) 
+
+# candidate_plots_zonal %>% 
+#   dplyr::mutate(mean_slope = mean_slope*(180/pi)) %>% 
+#   dplyr::select(year_tree_id, tidyselect::starts_with("mean_")) %>% 
+#   tidyr::pivot_longer(cols = tidyselect::starts_with("mean_"), names_prefix = "mean_")
+
+# rast
+shade_rast_temp <- shade_rast %>% 
+  terra::crop(
+    aoi_temp %>% terra::vect()
+    , mask = T
+  ) %>% 
+  terra::aggregate(2)
+dem_1m_rast_temp <- dem_1m_rast %>% 
+  terra::crop(
+    aoi_temp %>% terra::vect()
+    , mask = T
+  ) %>% 
+  terra::aggregate(2)
+# plot  
+plt_bg_temp <- 
+  ggplot2::ggplot() +
+  ggplot2::geom_tile(
+    data = shade_rast_temp %>% 
+      terra::as.data.frame(xy = T) %>% 
+      dplyr::rename(f=3)
+    , mapping = ggplot2::aes(x=x, y=y, fill = f)
+  ) +
+  ggplot2::scale_fill_distiller(palette = "Greys", direction = -1, na.value = "transparent", guide = "none") +
+  #elevation
+  ggnewscale::new_scale_fill() +
+  ggplot2::geom_tile(
+    data = dem_1m_rast_temp %>% 
+      terra::as.data.frame(xy = T) %>% 
+      dplyr::rename(f=3)
+    , mapping = ggplot2::aes(x=x, y=y, fill = f)
+    , alpha = 0.5
+  ) +
+  harrypotter::scale_fill_hp(
+    "mischief"
+    , na.value = "transparent"
+    , name = "elevation (m)"
+    , limits = terra::minmax(dem_1m_rast) %>% c() %>% `*`(0.95)
+    , guide = "none"
+  ) +
+  ggplot2::scale_x_continuous(expand = c(0, 0)) +
+  ggplot2::scale_y_continuous(expand = c(0, 0)) +
+  ggplot2::labs(
+    x = ""
+    , y = ""
+    , title = paste0(
+      "Environmental conditions in example candidate plots of "
+      , scales::comma(ex_temp$plot_area_ac[1],accuracy = 0.1, suffix = "ac")
+      , " from the "
+      , ex_temp$planting_year[1]
+      , " planting year "
+    )
+  ) +
+  ggplot2::theme_void() +
+  ggplot2::theme(
+    legend.position = "top" # c(0.5,1)
+    , legend.direction = "horizontal"
+    , legend.margin = ggplot2::margin(5,0,0,0)
+    , legend.text = ggplot2::element_text(size = 6)
+    , legend.title = ggplot2::element_text(size = 6)
+    , legend.key = ggplot2::element_rect(fill = NA, color = NA)
+    , plot.title = ggplot2::element_blank() # ggplot2::element_text(size = 10, face = "bold")
+    , plot.subtitle = ggplot2::element_text(size = 8, hjust = 0.5, face = "bold")
+  )
+##### slope
+plt_slope_temp <- 
+  plt_bg_temp +
+  # ggplot2::ggplot() +
+  # # cheesman
+  # ggplot2::geom_sf(
+  #   data = cheesman_sf %>% sf::st_intersection(aoi_temp)
+  #   , fill = NA, color = "black"
+  # ) +
+  # plots
+  ggnewscale::new_scale_fill() +
+  ggplot2::geom_sf(
+    data = ex_temp %>%  dplyr::mutate(mean_slope = mean_slope*(180/pi))
+    , mapping = ggplot2::aes(fill = mean_slope)
+    , color = "gray66"
+    , alpha = 0.7
+  ) +
+  ggplot2::scale_fill_viridis_c(
+    option = "inferno"
+    , limits = c(
+      min(candidate_plots_zonal$mean_slope)
+      , max(candidate_plots_zonal$mean_slope)
+    ) %>% `*`((180/pi))
+      # terrain_rad_rast$slope %>% 
+      # terra::aggregate(60) %>% 
+      # terra::minmax() %>% 
+      # c() %>% 
+      # `*`((180/pi))
+    , name = "mean slope (deg)"
+  ) +
+  ggplot2::labs(subtitle = "Slope")
+
+##### elevation
+plt_elevation_temp <-
+  plt_bg_temp +
+  # ggplot2::ggplot() +
+  # # cheesman
+  # ggplot2::geom_sf(
+  #   data = cheesman_sf %>% sf::st_intersection(aoi_temp)
+  #   , fill = NA, color = "black"
+  # ) +
+  # plots
+  ggnewscale::new_scale_fill() +
+  ggplot2::geom_sf(
+    data = ex_temp
+    , mapping = ggplot2::aes(fill = mean_elevation)
+    , color = "gray66"
+    , alpha = 0.7
+  ) +
+  harrypotter::scale_fill_hp(
+    option = "mischief"
+    , limits = c(
+      min(candidate_plots_zonal$mean_elevation)
+      , max(candidate_plots_zonal$mean_elevation)
+    )
+      # terrain_rad_rast$elevation %>% 
+      # terra::aggregate(60) %>% 
+      # terra::minmax() %>% 
+      # c() %>% 
+      # `*`((180/pi))
+    , name = "mean elevation (m)"
+    , guide = ggplot2::guide_colorbar( theme = ggplot2::theme(legend.text = ggplot2::element_text(angle = 45, hjust = 1)) )
+  ) +
+  ggplot2::labs(subtitle = "Elevation")
+
+##### hli
+plt_hli_temp <-
+  plt_bg_temp +
+  # ggplot2::ggplot() +
+  # # cheesman
+  # ggplot2::geom_sf(
+  #   data = cheesman_sf %>% sf::st_intersection(aoi_temp)
+  #   , fill = NA, color = "black"
+  # ) +
+  # plots
+  ggnewscale::new_scale_fill() +
+  ggplot2::geom_sf(
+    data = ex_temp
+    , mapping = ggplot2::aes(fill = mean_hli)
+    , color = "gray66"
+    , alpha = 0.7
+  ) +
+  ggplot2::scale_fill_viridis_c(
+    option = "cividis"
+    , limits = c(0, 1)
+    , name = "mean HLI"
+    # , guide = ggplot2::guide_colorbar( theme = ggplot2::theme(legend.text = ggplot2::element_text(angle = 45, hjust = 1)) )
+  ) +
+  ggplot2::labs(subtitle = "HLI")
+
+# patchwork
+plt_temp <- 
+  patchwork::wrap_plots(
+    plt_elevation_temp, plt_slope_temp, plt_hli_temp
+    , ncol = 1
+  )
+```
+
+```{r,eval=F, fig.height = 11, fig.width = 6.6}
+ggplot2::ggsave("../data/ex_environmental_covariates.jpg", plot = plt_temp, height = 11, width = 6.6)
+```
+
+neat. even within a planting year area there is some variation in the environmental variables describing the candidate plot locations
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+remove(list = ls()[grep("_temp",ls())])
+gc()
+```
+
+### Cluster Candidate Plot Locations
+
+To isolate how well the UAS workflow performs across different tree sizes and ages (planting years) using the field validation, our present objective is to establish matching topographic plot locations across the planting years. By selecting sample plot locations (non-random) that are topographically similar, we isolate the true independent variable we are seeking to monitor -- tree presence and structure -- from sensor artifacts caused by slope steepness and lighting geometry (shadows/glare).
+
+To control for terrain-based UAS sensor changes and generate an unbiased validation data set of field-measured values, we'll use a standard K-means clustering workflow to group our candidate plot polygons into matching/similar topographic cohorts based on elevation, slope, and topographic heat load index (HLI). Then, we'll create sets of similar plot locations with one plot per planting year in each set.
+
+```{r}
+get_best_match_set_temp <- function(my_plot_area_ac) {
+  # which
+  which_df_temp <- 
+    candidate_plots_zonal %>% 
+    dplyr::filter(plot_area_ac==my_plot_area_ac)
+  # select covariates and scale
+  plots_temp <- 
+    which_df_temp %>% 
+    sf::st_drop_geometry() %>% 
+    dplyr::ungroup() %>% 
+    dplyr::mutate(
+      dplyr::across(
+        .cols = c(tidyselect::starts_with("mean_"),tidyselect::starts_with("stdev_"))
+        , .fns  = ~ base::scale(.x) %>% as.numeric()
+      )
+    )
+  # plots_temp %>% dplyr::glimpse()
+  # plots_temp %>% dplyr::select(c(tidyselect::starts_with("mean_"),tidyselect::starts_with("stdev_"))) %>% summary()
+  
+  # compare all to one year
+  first_yr_temp <- min(plots_temp$planting_year)
+  
+  first_yr_plots_temp <- 
+    plots_temp %>% 
+    dplyr::filter(planting_year == first_yr_temp) %>% 
+    dplyr::rename_with(
+      .cols = c(year_tree_fact,year_tree_id,planting_year)
+      , ~paste0("anchor_", .x, recycle0 = T)
+    ) %>% 
+    dplyr::select(
+      tidyselect::starts_with("anchor_")
+      , tidyselect::starts_with("mean_"),tidyselect::starts_with("stdev_")
+    ) %>% 
+    sf::st_drop_geometry()
+  # first_yr_plots_temp %>% dplyr::glimpse()
+  
+  comp_plots_temp <- plots_temp %>% 
+    dplyr::filter(planting_year != first_yr_temp) %>% 
+    dplyr::select(
+      year_tree_fact,year_tree_id,planting_year
+      , tidyselect::starts_with("mean_"),tidyselect::starts_with("stdev_")
+    ) %>% 
+    dplyr::rename_with(~paste0("comp_", .x, recycle0 = T)) %>% 
+    sf::st_drop_geometry()
+  # comp_plots_temp %>% dplyr::glimpse()
+  
+  # calc SSE across all pairwise combinations and pick the lowest sse
+  matched_pairs_temp <-
+    first_yr_plots_temp %>% 
+    tidyr::crossing(comp_plots_temp) %>% 
+    # dplyr::glimpse()
+    # Calculate squared differences for each covariate pair
+    dplyr::mutate(
+      se_elev = (mean_elevation - comp_mean_elevation)^2
+      , se_mslp = (mean_slope - comp_mean_slope)^2
+      , se_sslp = (stdev_slope - comp_stdev_slope)^2
+      , se_mhli = (mean_hli - comp_mean_hli)^2
+      , se_shli = (stdev_hli - comp_stdev_hli)^2
+      # sum of squared errors (sse)
+      , sse_total = se_elev + se_mslp + se_sslp + se_mhli + se_shli
+    ) %>% 
+    # get a ranking of the most similar for each plot,year
+    dplyr::group_by(anchor_year_tree_fact,anchor_year_tree_id,anchor_planting_year,comp_planting_year) %>% 
+    dplyr::slice_min(order_by = sse_total, n = 1, with_ties = FALSE) %>% 
+    dplyr::ungroup() %>% 
+    # sum the sse by anchor tree, then pick the min sse overall
+    dplyr::group_by(anchor_year_tree_fact,anchor_year_tree_id,anchor_planting_year) %>% 
+    dplyr::mutate(set_sse_total = sum(sse_total)) %>% 
+    dplyr::ungroup() %>% 
+    dplyr::mutate(rank_sse = dplyr::dense_rank(set_sse_total)) %>% 
+    dplyr::arrange(rank_sse,anchor_year_tree_fact,comp_planting_year)
+  # matched_pairs_temp %>% dplyr::glimpse()
+  
+  # pick the min sse overall
+  best_year_tree_fact_temp <-
+    matched_pairs_temp %>% 
+    dplyr::filter(
+      set_sse_total == min(set_sse_total)
+    ) %>% 
+    dplyr::select(tidyselect::ends_with("year_tree_fact")) %>% 
+    tidyr::pivot_longer(dplyr::everything()) %>% 
+    dplyr::pull(value) %>% 
+    unique()
+  
+  # return
+  return(list(
+    candidate_plots_df = 
+      which_df_temp %>% 
+      dplyr::mutate(
+        is_best_plot_set = ifelse(year_tree_fact %in% best_year_tree_fact_temp, T, F)
+      )
+    , matched_pairs_df = matched_pairs_temp
+  ))
+}
+#map over plot sizes
+best_match_set_list <- 
+  candidate_plots_sf$plot_area_ac %>% 
+  unique() %>% 
+  purrr::set_names() %>% 
+  purrr::map(get_best_match_set_temp)
+
+# best_match_set_list[[1]]$matched_pairs_df %>% dplyr::glimpse()
+# best_match_set_list[[1]]$candidate_plots_df %>% dplyr::glimpse()
+# best_match_set_list %>% names()
+
+matched_pairs_df <- best_match_set_list %>% purrr::map(~purrr::pluck(.x,"matched_pairs_df")) %>% purrr::list_rbind(names_to = "plot_area_ac")
+# matched_pairs_df %>% dplyr::glimpse()
+candidate_plots_zonal <-
+  best_match_set_list %>% 
+  purrr::map(~purrr::pluck(.x,"candidate_plots_df")) %>% 
+  purrr::list_rbind() 
+# candidate_plots_zonal  %>% 
+#   sf::st_drop_geometry() %>%  
+#   dplyr::count(plot_area_ac, is_best_plot_set)
+# candidate_plots_zonal %>% dplyr::glimpse()
+```
+
+
+
+```{r}
+# matched_pairs_df %>% 
+#   dplyr::filter(plot_area_ac==1) %>% 
+#   ggplot2::ggplot(
+#     mapping = ggplot2::aes(x = mean_slope, y = mean_hli)
+#   ) +
+#   ggplot2::geom_jitter(
+#     mapping = ggplot2::aes(color = factor(rank_sse), shape = factor(comp_planting_year))
+#     , width = 0.02
+#     , height = 0.02
+#     , size = 5
+#     , alpha = 0.7
+#   ) +
+#   ggplot2::scale_shape_manual(values = c(15,16,17,18)) +
+#   # ggplot2::scale_color_brewer(palette = "Set2") +
+#   ggplot2::scale_color_viridis_d(option = "turbo") +
+#   ggplot2::theme_light()
+
+candidate_plots_zonal %>% 
+  ggplot2::ggplot(mapping = ggplot2::aes(x = mean_elevation, y = mean_hli, color = is_best_plot_set, fill = is_best_plot_set)) +
+  ggplot2::geom_polygon(
+    data = ~ .x %>% 
+      dplyr::filter(is_best_plot_set) %>% 
+      dplyr::group_by(plot_area_ac,is_best_plot_set) %>% 
+      dplyr::slice(chull(mean_elevation, mean_hli))
+    , mapping = ggplot2::aes(fill=is_best_plot_set)
+    , alpha = 0.05
+    , lwd = 0.5
+    , linetype = "dashed"
+    , linejoin = "round"
+  ) +
+  ggplot2::geom_point(mapping = ggplot2::aes(shape = factor(planting_year)), size = 3) +
+  # ggplot2::stat_ellipse(data = ~dplyr::filter(.x, is_best_plot_set), size = 1, type = "t", level = 0.8) + 
+  ggplot2::facet_grid(
+    cols = dplyr::vars(plot_area_ac)
+    , labeller = ggplot2::as_labeller(\(x) paste("Plot Area:", x, "ac"))
+  ) +
+  ggplot2::scale_color_manual(values = c("TRUE"="navy","FALSE"="gray"), name = "selected\nplot") +
+  ggplot2::scale_fill_manual(values = c("TRUE"="navy","FALSE"="gray"), guide = "none") +
+  ggplot2::scale_shape_manual(values = c(21:25), name = "planting\nyear") +
+  ggplot2::theme_light() +
+  ggplot2::theme(
+    legend.position = "top"
+    , legend.direction = "horizontal"
+    , strip.text = ggplot2::element_text(size = 9, face = "bold", color = "black")
+  ) +
+  ggplot2::guides(
+    color = ggplot2::guide_legend(
+      override.aes = list(shape = 15, size = 6, linetype = 0)
+    )
+    , fill = "none"
+  )
+  
+
+```
+
+
+
+```{r, include=F, eval=F}
+
+# select covariates and scale
+plots_temp <- 
+  candidate_plots_zonal %>% 
+  dplyr::filter(plot_area_ac==1) 
+scale_temp <- 
+  plots_temp %>% 
+  sf::st_drop_geometry() %>% 
+  dplyr::select(tidyselect::starts_with("mean_"),tidyselect::starts_with("stdev_")) %>% 
+  scale()
+# group into 3 topographically similar classes
+set.seed(44)
+# ?stats::kmeans
+kmeans_temp <- stats::kmeans(
+  x = scale_temp 
+  , centers = 3 # the number of clusters
+  , nstart = 25 # how many random sets should be chosen?
+)
+kmeans_temp$cluster %>% table()
+
+# 5. Bind Cluster IDs back to Spatial Framework ----
+candidate_plots_zonal <- candidate_plots_sf %>% 
+  dplyr::left_join(candidate_plots_zonal, by = base::c("plot_id", "planting_year")) %>% 
+  dplyr::mutate(topo_group_cohort = base::as.factor(kmeans_model$cluster))
+
+print(candidate_plots_zonal)
+
+```
+
+
 ```{r, eval = F, include = F}
 # 1. Select Only Non-Redundant Zonal Averages ----
 # Explicitly drop raw aspect to prevent mathematical duplication and circular alignment errors
-clustering_inputs <- final_candidate_plots |> 
-  sf::st_drop_geometry() |> 
+clustering_inputs <- candidate_plots_zonal %>% 
+  sf::st_drop_geometry() %>% 
   dplyr::select(mean_elevation, mean_slope, mean_hli)
 
 # 2. Standardize the Variances (Z-Score Scaling) ----
@@ -1752,10 +2268,10 @@ kmeans_model <- base::kmeans(
 )
 
 # 4. Bind the Homogeneous Cohort Groups Back to the Spatial Framework ----
-final_candidate_plots <- final_candidate_plots |> 
+candidate_plots_zonal <- candidate_plots_zonal %>% 
   dplyr::mutate(topo_group_cohort = base::as.factor(kmeans_model$cluster))
 
-print(final_candidate_plots)
+print(candidate_plots_zonal)
 
 ```
 
@@ -1766,25 +2282,6 @@ print(final_candidate_plots)
 compiled_dem_5m <- terra::aggregate(dem_1m_rast, fact = 5, fun = "mean")
 hli_5m          <- terra::aggregate(hli_1m_rast, fact = 5, fun = "mean")
 
-# Stack the multi-scale structural metrics together for zonal profiling
-terrain_stack_1m <- c(dem_1m_rast, slope_rad_rast * (180 / pi), hli_1m_rast)
-names(terrain_stack_1m) <- c("elevation", "slope_deg", "hli")
-
-# 
-
-# 7. Extract Exact Zonal Topographic Statistics ----
-# exactextractr::exact_extract computes perfect area-weighted means for overlapping edge cells
-zonal_metrics <- exactextractr::exact_extract(
-  x = terrain_stack_1m, 
-  y = candidate_plots_sf, 
-  fun = "mean",
-  append_cols = c("plot_id", "planting_year")
-) %>% 
-  dplyr::rename(
-    mean_elevation = mean.elevation,
-    mean_slope     = mean.slope_deg,
-    mean_hli       = mean.hli
-  )
 
 # 8. Statistically Group Similar Polygons (K-Means Clustering) ----
 # Normalize the extracted topographic values so variables have equal statistical weight
@@ -1797,11 +2294,11 @@ set.seed(42)
 kmeans_model <- kmeans(clustering_data, centers = 3, nstart = 25)
 
 # Append the group cohorts back into the spatial data framework
-final_candidate_plots <- candidate_plots_sf %>% 
+candidate_plots_zonal <- candidate_plots_sf %>% 
   dplyr::left_join(zonal_metrics, by = c("plot_id", "planting_year")) %>% 
   dplyr::mutate(topo_group_cohort = as.factor(kmeans_model$cluster))
 
-print(final_candidate_plots)
+print(candidate_plots_zonal)
 
 ```
 
