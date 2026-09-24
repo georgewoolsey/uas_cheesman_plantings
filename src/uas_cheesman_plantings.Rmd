@@ -1143,6 +1143,23 @@ remove(list = ls()[grep("_temp",ls())])
 gc()
 ```
 
+let's check out the estimated planting extent polygons for each planting year.
+
+```{r}
+list.files("../data/CheesmanDroneStudy_PlantingUnits/", full.names = T, pattern = "*.shp$") %>% 
+  purrr::map(
+    \(x)
+    sf::st_read(x) %>% 
+      dplyr::mutate(
+        planting_year = stringr::str_sub(basename(x),start = 1, end = 4) %>% as.numeric()
+      ) %>% 
+      dplyr::select(planting_year)
+  ) %>% 
+  purrr::list_rbind() %>% 
+  dplyr::glimpse()
+```
+
+
 ### Elevation
 
 this data is directly from the USGS National Map
@@ -2104,9 +2121,85 @@ get_best_match_set_temp <- function(my_plot_area_ac) {
       , se_shli = (stdev_hli - comp_stdev_hli)^2
       # sum of squared errors (sse)
       , sse_total = se_elev + se_mslp + se_sslp + se_mhli + se_shli
-    ) %>% 
+    )
+  # matched_pairs_temp %>% dplyr::glimpse()
+  
+  get_overall_best_set_temp_fn <- function(mp) {
+    mp %>% # = matched_pairs_temp
     # get a ranking of the most similar for each anchor plot,year
-    dplyr::group_by(anchor_year_tree_fact,anchor_year_tree_id,anchor_planting_year,comp_planting_year) %>% 
+    dplyr::group_by(anchor_year_tree_fact,anchor_year_tree_id,anchor_planting_year,comp_planting_year) %>% #### end here to use full data xxxxx
+    dplyr::slice_min(order_by = sse_total, n = 1, with_ties = FALSE) %>% 
+    dplyr::ungroup() %>% 
+    # sum the sse by anchor tree, then pick the min sse overall
+    dplyr::group_by(anchor_year_tree_fact,anchor_year_tree_id,anchor_planting_year) %>% 
+    dplyr::mutate(set_sse_total = sum(sse_total)) %>% 
+    dplyr::ungroup() %>% 
+    dplyr::mutate(rank_sse = dplyr::dense_rank(set_sse_total)) %>% 
+    dplyr::arrange(rank_sse,anchor_year_tree_fact,comp_planting_year) %>% 
+    # dplyr::glimpse()
+    dplyr::filter(
+      set_sse_total == min(set_sse_total)
+    )
+    # dplyr::glimpse()
+  }
+  # get_overall_best_set_temp_fn(matched_pairs_temp) %>% dplyr::glimpse()
+    
+  
+  # if we assume that all combinations can be feasibly sampled in the field....
+  # ....we only need to get the unique sets that minimuze SSE while ensuring that no plot is sampled more than once
+  # if there even are any matches
+    # ?purrr::reduce
+    # purrr::reduce(letters[1:5], paste, sep = ".")
+    # 1:3  %>% reduce(`+`)
+    unique_matched_pairs_temp <- purrr::reduce(
+      # go through all plots except first since we start there
+      .x = 2:length(unique(matched_pairs_temp$anchor_year_tree_fact))
+      # start with the first id
+      , .init = # = iter_temp
+          get_overall_best_set_temp_fn(matched_pairs_temp) # starts with looking over the full set
+      , .f = function(iter_temp, i){
+        # how many rows are needed in return
+        min_rows <- length(unique(matched_pairs_temp$comp_planting_year))
+        #ids of curr state
+        curr_anchor_id <- unique(iter_temp$anchor_year_tree_fact)
+        curr_comp_id <- unique(iter_temp$comp_year_tree_fact)
+        
+        # filter
+        f_pairs_temp <- 
+          matched_pairs_temp %>% 
+          dplyr::filter(
+            !(anchor_year_tree_fact %in% curr_anchor_id) &
+            !(comp_year_tree_fact %in% curr_comp_id)
+          )
+        
+        if(nrow(f_pairs_temp)<min_rows){return(iter_temp)}
+        
+        # do it without already used
+        next_matched_pairs_temp <- get_overall_best_set_temp_fn(f_pairs_temp)
+        
+        # add if freee
+        if(
+          nrow(next_matched_pairs_temp) == min_rows
+        ) {
+          return(
+            iter_temp %>% dplyr::bind_rows(next_matched_pairs_temp)
+          )
+        }else{
+          # return current state
+          return(iter_temp)
+        }
+    }) %>% 
+    # replace ranking
+    dplyr::ungroup() %>% 
+    dplyr::arrange(set_sse_total,anchor_year_tree_fact,comp_planting_year) %>% 
+    dplyr::mutate(rank_sse = dplyr::dense_rank(set_sse_total))
+  
+  # unique_matched_pairs_temp %>% dplyr::glimpse()
+  
+  best_by_anchor_plot_compyr <- 
+    matched_pairs_temp %>% 
+    # get a ranking of the most similar for each anchor plot,year
+    dplyr::group_by(anchor_year_tree_fact,anchor_year_tree_id,anchor_planting_year,comp_planting_year) %>% #### end here to use full data xxxxx
     dplyr::slice_min(order_by = sse_total, n = 1, with_ties = FALSE) %>% 
     dplyr::ungroup() %>% 
     # sum the sse by anchor tree, then pick the min sse overall
@@ -2115,11 +2208,11 @@ get_best_match_set_temp <- function(my_plot_area_ac) {
     dplyr::ungroup() %>% 
     dplyr::mutate(rank_sse = dplyr::dense_rank(set_sse_total)) %>% 
     dplyr::arrange(rank_sse,anchor_year_tree_fact,comp_planting_year)
-  # matched_pairs_temp %>% dplyr::glimpse()
+  # best_by_anchor_plot_compyr %>% dplyr::glimpse()
   
   # pick the min sse overall
   best_year_tree_fact_temp <-
-    matched_pairs_temp %>% 
+    best_by_anchor_plot_compyr %>% 
     dplyr::filter(
       set_sse_total == min(set_sse_total)
     ) %>% 
@@ -2130,11 +2223,7 @@ get_best_match_set_temp <- function(my_plot_area_ac) {
   
   # return
   return(list(
-    candidate_plots_df = 
-      which_df_temp %>% 
-      dplyr::mutate(
-        is_best_plot_set = ifelse(year_tree_fact %in% best_year_tree_fact_temp, T, F)
-      )
+    unique_matched_pairs_df = unique_matched_pairs_temp
     , matched_pairs_df = matched_pairs_temp
   ))
 }
@@ -2145,15 +2234,35 @@ best_match_set_list <-
   purrr::set_names() %>% 
   purrr::map(get_best_match_set_temp)
 
-# best_match_set_list[[1]]$matched_pairs_df %>% dplyr::glimpse()
-# best_match_set_list[[1]]$candidate_plots_df %>% dplyr::glimpse()
 # best_match_set_list %>% names()
+# best_match_set_list[[1]]$unique_matched_pairs_df %>% dplyr::glimpse()
+# best_match_set_list[[1]]$matched_pairs_df %>% dplyr::glimpse()
 
-matched_pairs_df <- best_match_set_list %>% purrr::map(~purrr::pluck(.x,"matched_pairs_df")) %>% purrr::list_rbind(names_to = "plot_area_ac")
+matched_pairs_df <- best_match_set_list %>% purrr::map(~purrr::pluck(.x,"unique_matched_pairs_df")) %>% purrr::list_rbind(names_to = "plot_area_ac")
 # matched_pairs_df %>% dplyr::glimpse()
+
 candidate_plots_zonal <-
   best_match_set_list %>% 
-  purrr::map(~purrr::pluck(.x,"candidate_plots_df")) %>% 
+  purrr::imap(function(x,nm){
+   unique_matched_pairs_df <- purrr::pluck(x,"unique_matched_pairs_df") 
+   
+   best_year_tree_fact_temp <- 
+    unique_matched_pairs_df %>% 
+    dplyr::filter(
+      set_sse_total == min(set_sse_total)
+    ) %>% 
+    dplyr::select(tidyselect::ends_with("year_tree_fact")) %>% 
+    tidyr::pivot_longer(dplyr::everything()) %>% 
+    dplyr::pull(value) %>% 
+    unique()
+   
+   # attach flag
+    candidate_plots_zonal %>% 
+      dplyr::filter(plot_area_ac==as.numeric(nm)) %>% 
+      dplyr::mutate(
+        is_best_plot_set = ifelse(year_tree_fact %in% best_year_tree_fact_temp, T, F)
+      )
+  }) %>% 
   purrr::list_rbind() 
 # candidate_plots_zonal  %>% 
 #   sf::st_drop_geometry() %>%  
@@ -2305,7 +2414,7 @@ matched_pairs_df %>%
   kableExtra::collapse_rows(1)
 ```
 
-finally, let's look at those in space
+finally, let's look at the first two sets in space
 
 *1.0 acre plots*
 
@@ -2315,11 +2424,21 @@ mapview::mapviewOptions(
   homebutton = FALSE
   , basemaps = c("Esri.WorldImagery","OpenStreetMap")
 )
+
 df_temp <- 
   candidate_plots_zonal %>% 
   dplyr::filter(
     plot_area_ac == 1
-    , is_best_plot_set
+  ) %>% 
+  # add on rank
+  dplyr::inner_join(
+    matched_pairs_df %>% 
+      dplyr::filter(plot_area_ac==1,rank_sse<=2) %>% 
+      dplyr::select(rank_sse,tidyselect::ends_with("year_tree_fact")) %>% 
+      tidyr::pivot_longer(cols = -rank_sse) %>% 
+      dplyr::distinct(rank_sse,value) %>% 
+      dplyr::rename(year_tree_fact=value)  
+    , by = "year_tree_fact"
   ) %>% 
   dplyr::mutate(
     planting_year=factor(planting_year)
@@ -2331,16 +2450,40 @@ df_temp <-
       , ")"
     )
   ) %>% 
-  dplyr::select(planting_year,coords,lat,long,plot_area_ac,tidyselect::starts_with("mean_"),tidyselect::starts_with("stdev_"))
+  dplyr::arrange(rank_sse,planting_year) %>% 
+  dplyr::mutate(rank_sse=ordered(rank_sse)) %>% 
+  dplyr::select(rank_sse,year_tree_fact ,planting_year,coords,lat,long,plot_area_ac,tidyselect::starts_with("mean_"),tidyselect::starts_with("stdev_")) %>% 
+  dplyr::rename(plot_set_number=rank_sse)
+
+df_temp %>% dplyr::glimpse()
   
-df_temp %>% 
-  mapview::mapview(zcol = "planting_year", layer.name=paste0("selected plot locations: ",unique(df_temp$plot_area_ac)," ac"))
+mapview::mapview(
+  df_temp %>% dplyr::filter(plot_set_number==min(df_temp$plot_set_number))
+  , zcol = "planting_year"
+  , layer.name=paste0("#", min(df_temp$plot_set_number)," selected plot locations: ",unique(df_temp$plot_area_ac)," ac")
+) +
+mapview::mapview(
+  df_temp %>% dplyr::filter(plot_set_number==max(df_temp$plot_set_number))
+  , zcol = "planting_year"
+  , layer.name=paste0("#", max(df_temp$plot_set_number)," selected plot locations: ",unique(df_temp$plot_area_ac)," ac")
+  , hide = T
+)
 ```
 
 ```{r, include=F, eval=T}
 # df_temp %>% dplyr::glimpse()
 # df_temp %>% sf::st_crs()
-sf::st_write(df_temp, dsn = paste0("../data/selected_field_plots_",unique(df_temp$plot_area_ac),"ac.gpkg"), quiet = T, append = F)
+sf::st_write(df_temp, dsn = paste0("../data/selected_field_plots_",unique(df_temp$plot_area_ac),"ac_polys.gpkg"), quiet = T, append = F)
+
+# sf::st_crs(known_trees_sf,parameters=T)[["epsg"]]
+# sf::st_crs(df_temp,parameters=T)[["epsg"]]
+known_trees_sf %>% 
+  dplyr::select(year_tree_fact) %>% 
+  dplyr::inner_join(df_temp %>% sf::st_drop_geometry(), by = "year_tree_fact") %>% 
+  dplyr::arrange(plot_set_number,planting_year) %>% 
+  dplyr::select(dplyr::all_of(names(df_temp))) %>% 
+  # dplyr::glimpse()
+sf::st_write(dsn = paste0("../data/selected_field_plots_",unique(df_temp$plot_area_ac),"ac_points.gpkg"), quiet = T, append = F)
 ```
 
 ```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
@@ -2355,7 +2498,16 @@ df_temp <-
   candidate_plots_zonal %>% 
   dplyr::filter(
     plot_area_ac == 0.5
-    , is_best_plot_set
+  ) %>% 
+  # add on rank
+  dplyr::inner_join(
+    matched_pairs_df %>% 
+      dplyr::filter(plot_area_ac==0.5,rank_sse<=2) %>% 
+      dplyr::select(rank_sse,tidyselect::ends_with("year_tree_fact")) %>% 
+      tidyr::pivot_longer(cols = -rank_sse) %>% 
+      dplyr::distinct(rank_sse,value) %>% 
+      dplyr::rename(year_tree_fact=value)  
+    , by = "year_tree_fact"
   ) %>% 
   dplyr::mutate(
     planting_year=factor(planting_year)
@@ -2367,19 +2519,46 @@ df_temp <-
       , ")"
     )
   ) %>% 
-  dplyr::select(planting_year,coords,lat,long,plot_area_ac,tidyselect::starts_with("mean_"),tidyselect::starts_with("stdev_"))
+  dplyr::arrange(rank_sse,planting_year) %>% 
+  dplyr::mutate(rank_sse=ordered(rank_sse)) %>% 
+  dplyr::select(rank_sse,year_tree_fact ,planting_year,coords,lat,long,plot_area_ac,tidyselect::starts_with("mean_"),tidyselect::starts_with("stdev_")) %>% 
+  dplyr::rename(plot_set_number=rank_sse)
+
+df_temp %>% dplyr::glimpse()
   
-df_temp %>% 
-  mapview::mapview(zcol = "planting_year", layer.name=paste0("selected plot locations: ",unique(df_temp$plot_area_ac)," ac"))
+mapview::mapview(
+  df_temp %>% dplyr::filter(plot_set_number==min(df_temp$plot_set_number))
+  , zcol = "planting_year"
+  , layer.name=paste0("#", min(df_temp$plot_set_number)," selected plot locations: ",unique(df_temp$plot_area_ac)," ac")
+) +
+mapview::mapview(
+  df_temp %>% dplyr::filter(plot_set_number==max(df_temp$plot_set_number))
+  , zcol = "planting_year"
+  , layer.name=paste0("#", max(df_temp$plot_set_number)," selected plot locations: ",unique(df_temp$plot_area_ac)," ac")
+  , hide = T
+)
 ```
 
 ```{r, include=F, eval=T}
 # df_temp %>% dplyr::glimpse()
 # df_temp %>% sf::st_crs()
-sf::st_write(df_temp, dsn = paste0("../data/selected_field_plots_",unique(df_temp$plot_area_ac),"ac.gpkg"), quiet = T, append = F)
+sf::st_write(df_temp, dsn = paste0("../data/selected_field_plots_",unique(df_temp$plot_area_ac),"ac_polys.gpkg"), quiet = T, append = F)
+
+# sf::st_crs(known_trees_sf,parameters=T)[["epsg"]]
+# sf::st_crs(df_temp,parameters=T)[["epsg"]]
+known_trees_sf %>% 
+  dplyr::select(year_tree_fact) %>% 
+  dplyr::inner_join(df_temp %>% sf::st_drop_geometry(), by = "year_tree_fact") %>% 
+  dplyr::arrange(plot_set_number,planting_year) %>% 
+  dplyr::select(dplyr::all_of(names(df_temp))) %>% 
+  # dplyr::glimpse()
+sf::st_write(dsn = paste0("../data/selected_field_plots_",unique(df_temp$plot_area_ac),"ac_points.gpkg"), quiet = T, append = F)
 ```
 
 ```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
 remove(list = ls()[grep("_temp",ls())])
 gc()
 ```
+
+
+
