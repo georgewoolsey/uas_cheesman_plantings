@@ -24,7 +24,7 @@ The objective of this project is to demonstrate the use of UAS remote sensing to
 
 ```{r, include=FALSE, warning=F, message=F}
 ################################################
-##```{r,eval=T
+## ```{r,eval=F
 ################################################
 library(knitr)
 library(mapview)
@@ -86,7 +86,7 @@ gc()
 
 Though not necessary for `cloud2trees` data processing, let's quickly check out the location and structure of the data we have
 
-```{r,eval=T,purl=FALSE}
+```{r,eval=F,purl=FALSE}
 # directory with the downloaded .las|.laz files
 point_cld_folder <- "../data/CheesmanLAS/"
 # is there data?
@@ -97,7 +97,7 @@ list.files(point_cld_folder, pattern = ".*\\.(laz|las)$")[1]
 
 again, this is not necessary for `cloud2trees` data processing but we can use `lidR` to read the point cloud folder as a catalog which doesn't read in the actual points but just the point cloud header data which includes information on things like the spatial location of the data, the point density, and other point attributes
 
-```{r,eval=T,purl=FALSE}
+```{r,eval=F,purl=FALSE}
 # read folder as LAScatalog
 ctg_temp <- lidR::readLAScatalog(point_cld_folder)
 # what information do we get about the point cloud?
@@ -106,7 +106,7 @@ ctg_temp
 
 let's look at the point cloud extent on a map to orient ourselves in space
 
-```{r,eval=T,purl=FALSE}
+```{r,eval=F,purl=FALSE}
 ctg_temp %>% 
   cloud2trees:::check_las_ctg_empty() %>% 
   purrr::pluck("data") %>% 
@@ -1143,23 +1143,6 @@ remove(list = ls()[grep("_temp",ls())])
 gc()
 ```
 
-let's check out the estimated planting extent polygons for each planting year.
-
-```{r}
-list.files("../data/CheesmanDroneStudy_PlantingUnits/", full.names = T, pattern = "*.shp$") %>% 
-  purrr::map(
-    \(x)
-    sf::st_read(x) %>% 
-      dplyr::mutate(
-        planting_year = stringr::str_sub(basename(x),start = 1, end = 4) %>% as.numeric()
-      ) %>% 
-      dplyr::select(planting_year)
-  ) %>% 
-  purrr::list_rbind() %>% 
-  dplyr::glimpse()
-```
-
-
 ### Elevation
 
 this data is directly from the USGS National Map
@@ -1716,17 +1699,43 @@ We used satellite imagery to manually annotate point locations of surviving tree
 let's check those candidate sample plot locations centered on surviving tree points
 
 ```{r}
-# I went about to getting at least 10 trees per planting year. 
-# I tried to capture areas that encompass the entire planting areas for each planting year,
-# but trees were admittedly a little sparse, 
-# which made me make it a bit more dense in areas where there was good survival. 
+# # I went about to getting at least 10 trees per planting year. 
+# # I tried to capture areas that encompass the entire planting areas for each planting year,
+# # but trees were admittedly a little sparse, 
+# # which made me make it a bit more dense in areas where there was good survival. 
+# ##### !!!!!!!!!!!!!!!! old
+# known_trees_sf <-
+#   readxl::read_excel("../data/Trees_PlantingYears0406070913.xlsx") %>%
+#   dplyr::rename_with(tolower) %>%
+#   dplyr::filter(!is.na(plantingyear), !is.na(lat), !is.na(long)) %>%
+#   sf::st_as_sf(coords = c("long","lat"), crs = sf::st_crs(4326), remove=F) %>%
+#   sf::st_transform(terra::crs(dem_1m_rast)) %>%
+#   dplyr::rename(planting_year=plantingyear) %>%
+#   dplyr::group_by(planting_year) %>%
+#   dplyr::mutate(
+#     year_tree_id = dplyr::row_number()
+#     , year_tree_fact = forcats::fct_cross(
+#       factor(planting_year)
+#       , factor(year_tree_id)
+#       ,sep = "_"
+#     )
+#   ) %>%
+#   dplyr::ungroup()
+# ##### !!!!!!!!!!!!!!!! old
+
 known_trees_sf <-
-  readxl::read_excel("../data/Trees_PlantingYears0406070913.xlsx") %>% 
+  sf::st_read("../data/known_trees/updated_known_trees.shp", quiet = T) %>% 
   dplyr::rename_with(tolower) %>% 
-  dplyr::filter(!is.na(plantingyear), !is.na(lat), !is.na(long)) %>% 
-  sf::st_as_sf(coords = c("long","lat"), crs = sf::st_crs(4326), remove=F) %>%  
+  dplyr::filter(!is.na(planting_y)) %>% 
+  # get lat long points
+  sf::st_transform(sf::st_crs(4326)) %>%  
+  dplyr::mutate(
+    long = sf::st_coordinates(.)[, 1]
+    , lat  = sf::st_coordinates(.)[, 2]
+  ) %>% 
+  # transform to our working crs
   sf::st_transform(terra::crs(dem_1m_rast)) %>% 
-  dplyr::rename(planting_year=plantingyear) %>% 
+  dplyr::rename(planting_year=planting_y) %>% 
   dplyr::group_by(planting_year) %>% 
   dplyr::mutate(
     year_tree_id = dplyr::row_number()
@@ -1736,8 +1745,31 @@ known_trees_sf <-
       ,sep = "_"
     )
   ) %>% 
-  dplyr::ungroup()
+  dplyr::ungroup() %>% 
+  dplyr::select(planting_year,year_tree_id,year_tree_fact,lat,long)
+
 # known_trees_sf %>% dplyr::glimpse()
+```
+
+let's also check out the estimated planting extent polygons for each planting year.
+
+```{r}
+planting_year_areas_sf <- 
+  list.files("../data/CheesmanDroneStudy_PlantingUnits/", full.names = T, pattern = "*.shp$") %>% 
+  purrr::map(
+    \(x)
+    sf::st_read(x, quiet = T) %>% 
+      dplyr::mutate(
+        planting_year = stringr::str_sub(basename(x),start = 1, end = 4) %>% as.numeric()
+      ) %>% 
+      # sf::st_crs(parameters=T)
+      dplyr::select(planting_year)
+  ) %>% 
+  # purrr::map( ~purrr::pluck(.x,"epsg"))
+  purrr::list_rbind() %>% 
+  sf::st_transform(sf::st_crs(known_trees_sf))
+
+# planting_year_areas_sf %>% dplyr::glimpse()
 ```
 
 where are our candidate plot centers (i.e. known tree locations)?
@@ -1827,6 +1859,88 @@ candidate_plots_sf <- dplyr::bind_rows(
 #   dplyr::count(plot_area_ac, area_ac, area_m2)
 ```
 
+```{r, include = F, eval=F}
+# ?sf::st_join
+candidate_plots_sf %>% 
+  dplyr::filter(plot_area_ac==1) %>% 
+  dplyr::ungroup() %>% 
+  sf::st_difference(
+    planting_year_areas_sf %>% 
+      sf::st_union()
+  ) %>% 
+  ggplot2::ggplot() +
+  ggplot2::geom_sf(color = "black", fill="black") +
+  ggplot2::geom_sf(data = planting_year_areas_sf, color = "red", fill=NA) +
+  ggplot2::theme_void()
+
+olap_plots <- 
+  1:(candidate_plots_sf %>% dplyr::filter(plot_area_ac==1) %>% nrow()) %>% 
+  purrr::map(function(x){
+    
+    this_one <- candidate_plots_sf %>% dplyr::filter(plot_area_ac==1) %>% dplyr::slice(x)
+    
+    others <- candidate_plots_sf %>% dplyr::filter(plot_area_ac==1) %>% dplyr::slice(-c(x)) %>% sf::st_union()
+    
+    i <- this_one %>% sf::st_intersection(others)
+    
+    if(nrow(i)>0){
+      return(this_one %>% dplyr::select(year_tree_fact) %>% sf::st_drop_geometry())
+    }else{return(NULL)}
+  }) %>% 
+  purrr::list_rbind() %>% 
+  dplyr::mutate(is_olap_others = T)
+if(nrow(olap_plots)==0){olap_plots <- olap_plots %>% dplyr::mutate(year_tree_fact=as.factor(NA))} 
+# olap_plots %>% dplyr::glimpse()
+
+  
+candidate_plots_sf %>% 
+  dplyr::filter(plot_area_ac==1) %>% 
+  dplyr::left_join(olap_plots) %>% 
+  dplyr::left_join(
+    candidate_plots_sf %>% 
+      dplyr::filter(plot_area_ac==1) %>% 
+      dplyr::ungroup() %>% 
+      sf::st_difference(
+        planting_year_areas_sf %>% 
+          sf::st_union()
+      ) %>% 
+      sf::st_drop_geometry() %>% 
+      dplyr::select(year_tree_fact) %>% 
+      dplyr::mutate(is_out_unit = T)
+  ) %>% 
+  dplyr::mutate(
+    is_olap_others = dplyr::coalesce(is_olap_others,F)
+    , is_out_unit = dplyr::coalesce(is_out_unit,F)
+  ) %>% 
+  # sf::st_drop_geometry() %>% dplyr::count(is_olap_others,is_out_unit)
+  sf::st_write(dsn = paste0("../data/all_1ac_polys.gpkg"), quiet = T, append = F)
+known_trees_sf %>% 
+  dplyr::left_join(olap_plots) %>% 
+  dplyr::left_join(
+    candidate_plots_sf %>% 
+      dplyr::filter(plot_area_ac==1) %>% 
+      dplyr::ungroup() %>% 
+      sf::st_difference(
+        planting_year_areas_sf %>% 
+          sf::st_union()
+      ) %>% 
+      sf::st_drop_geometry() %>% 
+      dplyr::select(year_tree_fact) %>% 
+      dplyr::mutate(is_out_unit = T)
+  ) %>% 
+  dplyr::mutate(
+    is_olap_others = dplyr::coalesce(is_olap_others,F)
+    , is_out_unit = dplyr::coalesce(is_out_unit,F)
+  ) %>% 
+  # sf::st_drop_geometry() %>% dplyr::count(is_olap_others,is_out_unit)
+  # dplyr::glimpse()
+  sf::st_write(dsn = paste0("../data/known_trees.gpkg"), quiet = T, append = F)
+
+
+planting_year_areas_sf %>% sf::st_write(dsn = paste0("../data/planting_year_areas_sf.gpkg"), quiet = T, append = F)
+```
+
+
 We'll use the following three topographic variables to capture an independent set of environmental conditions:
 
 * Elevation: Controls for elevational shifts, such as temperature and precipitation
@@ -1861,7 +1975,7 @@ candidate_plots_zonal <- candidate_plots_sf %>%
 
 let's visualize those environmental values for the 1.0 acre candidate plots for a single planting year unit as an example
 
-```{r,eval=T}
+```{r,eval=F}
 ex_temp <- 
   candidate_plots_zonal %>% 
   dplyr::filter(
@@ -2042,7 +2156,7 @@ plt_temp <-
   )
 ```
 
-```{r,eval=T, fig.height = 11, fig.width = 6.6}
+```{r,eval=F, fig.height = 11, fig.width = 6.6}
 print(plt_temp)
 ggplot2::ggsave("../data/ex_environmental_covariates.jpg", plot = plt_temp, height = 11, width = 6.6)
 ```
