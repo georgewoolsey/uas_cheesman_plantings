@@ -24,7 +24,7 @@ The objective of this project is to demonstrate the use of UAS remote sensing to
 
 ```{r, include=FALSE, warning=F, message=F}
 ################################################
-## ```{r,eval=F
+## ```{r,eval=T
 ################################################
 library(knitr)
 library(mapview)
@@ -86,7 +86,7 @@ gc()
 
 Though not necessary for `cloud2trees` data processing, let's quickly check out the location and structure of the data we have
 
-```{r,eval=F,purl=FALSE}
+```{r,eval=T,purl=FALSE}
 # directory with the downloaded .las|.laz files
 point_cld_folder <- "../data/CheesmanLAS/"
 # is there data?
@@ -97,7 +97,7 @@ list.files(point_cld_folder, pattern = ".*\\.(laz|las)$")[1]
 
 again, this is not necessary for `cloud2trees` data processing but we can use `lidR` to read the point cloud folder as a catalog which doesn't read in the actual points but just the point cloud header data which includes information on things like the spatial location of the data, the point density, and other point attributes
 
-```{r,eval=F,purl=FALSE}
+```{r,eval=T,purl=FALSE}
 # read folder as LAScatalog
 ctg_temp <- lidR::readLAScatalog(point_cld_folder)
 # what information do we get about the point cloud?
@@ -106,7 +106,7 @@ ctg_temp
 
 let's look at the point cloud extent on a map to orient ourselves in space
 
-```{r,eval=F,purl=FALSE}
+```{r,eval=T,purl=FALSE}
 ctg_temp %>% 
   cloud2trees:::check_las_ctg_empty() %>% 
   purrr::pluck("data") %>% 
@@ -1975,7 +1975,7 @@ candidate_plots_zonal <- candidate_plots_sf %>%
 
 let's visualize those environmental values for the 1.0 acre candidate plots for a single planting year unit as an example
 
-```{r,eval=F}
+```{r,eval=T}
 ex_temp <- 
   candidate_plots_zonal %>% 
   dplyr::filter(
@@ -2156,7 +2156,7 @@ plt_temp <-
   )
 ```
 
-```{r,eval=F, fig.height = 11, fig.width = 6.6}
+```{r,eval=T, fig.height = 11, fig.width = 6.6}
 print(plt_temp)
 ggplot2::ggsave("../data/ex_environmental_covariates.jpg", plot = plt_temp, height = 11, width = 6.6)
 ```
